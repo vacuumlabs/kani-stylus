@@ -22,8 +22,9 @@ guessed at.
 cargo kani --harness s4_set_then_get --output-format terse   # one harness
 cargo kani --output-format terse                             # all of them
 
-# turn a counterexample into a runnable #[test]
-cargo kani --harness d1_add_number_can_decrease_the_counter --concrete-playback=print
+# turn a counterexample into a runnable #[test] (needs the unstable flag)
+cargo kani -Z concrete-playback --concrete-playback=print \
+    --harness d1_add_number_can_decrease_the_counter
 ```
 
 ## Results (2026-09-08, Kani 0.67.0, stylus-sdk 0.10.9)

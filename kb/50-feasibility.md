@@ -247,8 +247,26 @@ automatically over the full 2^256 input space. `d2` proves it is precisely a
 wrap rather than some other fault, and `d3` shows the guarded version is exact —
 together they make the demo airtight rather than a single red line.
 
-`--concrete-playback` needs the unstable flag: `cargo kani -Z concrete-playback
---concrete-playback=print`.
+**Concrete playback works**, and is the demo asset. It needs the unstable flag:
+
+```bash
+cargo kani -Z concrete-playback --concrete-playback=print \
+    --harness d1_add_number_can_decrease_the_counter
+```
+
+Kani emits a runnable `#[test]` carrying the 64 witness bytes (two `[u8; 32]`
+draws). Decoded, the counterexample it found is:
+
+```
+a       = 115792089237316195420432434140994567471862513504418138526629138312939329028097
+b       = 115792089237316195414155332405607886707005876980447656720081318813958861225983
+a + b   >= 2^256, so it wraps to
+result  = 115792089237316195411016781537914546325598405819225231207252873118985060614144
+```
+
+`result < a` — the counter went *down* after adding to it. That is the whole
+pitch in one screenshot: a real bug in the stock template, an exact witness, and
+a test you can paste into the repo, all from one 26-second command.
 
 ### Superseded: the regex hypothesis
 
