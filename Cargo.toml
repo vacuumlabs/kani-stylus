@@ -9,5 +9,4 @@ members = ["crates/kani-stylus-core"]
 exclude = [
     "examples/counter",
     "examples/vault",
-    "spikes/kani-smoke",
 ]

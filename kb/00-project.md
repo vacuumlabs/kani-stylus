@@ -29,11 +29,9 @@ kani-stylus/
 ├── kb/                  this knowledge base
 ├── crates/
 │   └── kani-stylus-core/  the library: SymbolicVM, slot store, keccak oracle
-├── examples/            each a real, deployable `cargo stylus new` project
-│   ├── counter/         storage, arithmetic, payable methods
-│   └── vault/           access control and mappings
-└── spikes/
-    └── kani-smoke/      the original feasibility probe, kept for the record
+└── examples/            each a real, deployable `cargo stylus new` project
+    ├── counter/         storage, arithmetic, payable methods
+    └── vault/           access control and mappings
 ```
 
 Everything under `examples/` is **excluded** from the workspace, deliberately.

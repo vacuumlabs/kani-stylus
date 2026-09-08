@@ -224,6 +224,15 @@ The way in is `#[kani::stub(stylus_sdk::crypto::keccak, ...)]` plus
 arity and generic-parameter count match, which `keccak<T: AsRef<[u8]>>` does.
 See [`crates/kani-stylus-core/src/keccak.rs`](../crates/kani-stylus-core/src/keccak.rs).
 
+**Why it still reaches ArbOS on chain.** `stylus-sdk` enables
+`alloy-primitives`' `native-keccak` feature for `cfg(target_arch = "wasm32")`,
+so on chain `alloy_primitives::keccak256` lowers to the ArbOS `native_keccak256`
+hostio — confirmed by `strings` on `examples/vault`'s release wasm, which
+imports `native_keccak256` from `vm_hooks`. Off wasm32 (i.e. under
+verification) the same call resolves to a software keccak, and *that* is what
+the stub replaces. So the deployed contract uses the fast host primitive while
+proofs use the oracle, with no divergence in contract source.
+
 ## Testing today: `TestVM`
 
 `stylus-sdk` with `--features stylus-test` pulls in the `stylus-test` crate

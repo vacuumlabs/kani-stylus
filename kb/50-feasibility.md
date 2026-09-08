@@ -107,9 +107,12 @@ Ordered by how much they gate the plan.
 
 ## Feasibility spike (2026-09-08) — resolved: `TestVM` is unusable, `SymbolicVM` works
 
-Spike crate: [`spikes/kani-smoke/`](../spikes/kani-smoke/). A `sol_storage!`
-counter plus staged harnesses that add one layer at a time, so the cost cliff
-can be located rather than guessed at.
+Established with a throwaway crate: a `sol_storage!` counter plus staged
+harnesses adding one layer at a time, so the cost cliff could be located rather
+than guessed at. The crate is gone (it became
+[`crates/kani-stylus-core`](../crates/kani-stylus-core) and the examples); the
+numbers and the reproduction recipe are below, and the original is in git
+history at `spikes/kani-smoke`.
 
 ### Result: `TestVM` cannot be verified by Kani at all
 
@@ -140,13 +143,35 @@ as present-and-unsupported.
 stubbing, unwinding, or solver tuning makes `TestVM` verifiable, because the
 obstruction is in `std::HashMap`'s constructor.
 
+<details>
+<summary>Reproducing it (this is the project's load-bearing claim, so it should
+stay checkable)</summary>
+
+In any Stylus crate with `stylus-sdk/stylus-test` enabled, add:
+
+```rust
+#[cfg(kani)]
+#[kani::proof]
+fn testvm_cannot_be_verified() {
+    let vm = stylus_sdk::testing::TestVM::default();
+    core::hint::black_box(&vm);
+}
+```
+
+`cargo kani --harness testvm_cannot_be_verified` fails within seconds on the
+`getrandom` syscall. It is deliberately **not** part of the committed suite: it
+fails with an unsupported-construct error rather than a panic, so
+`#[kani::should_panic]` cannot absorb it and it would turn `./verify.sh` red.
+
+</details>
+
 ### Result: a purpose-built symbolic host works, and is fast
 
-`spikes/kani-smoke/src/symbolic_vm.rs` implements `stylus_core::Host` directly:
-storage is a fixed `MAX_SLOTS`-entry array with a linear scan, transaction
-context is drawn once at construction, and unmodelled operations
-(`create1`, `call_contract`, …) are `unimplemented!()` so that a proof touching
-them fails loudly instead of silently.
+The prototype — now [`crates/kani-stylus-core`](../crates/kani-stylus-core) —
+implements `stylus_core::Host` directly: storage is a fixed-size array with a
+linear scan, transaction context is drawn once at construction, and unmodelled
+operations (`create1`, `call_contract`, …) are `unimplemented!()` so that a
+proof touching them fails loudly instead of silently.
 
 | Harness | What it proves | Checks | Time |
 | --- | --- | --- | --- |

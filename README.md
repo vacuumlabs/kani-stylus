@@ -148,8 +148,6 @@ crates/
 examples/          each one a real, deployable `cargo stylus new` project
   counter/         storage, arithmetic, payable methods
   vault/           access control and mappings
-spikes/
-  kani-smoke/      the original feasibility probe, kept for the record
 ```
 
 ## License
