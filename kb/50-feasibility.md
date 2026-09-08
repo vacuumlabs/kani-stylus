@@ -271,6 +271,72 @@ result  = 1157920892373161954110167815379145463255984058192252312072528731189850
 pitch in one screenshot: a real bug in the stock template, an exact witness, and
 a test you can paste into the repo, all from one 26-second command.
 
+### Finding: mappings are viable but an order of magnitude slower
+
+Measured 2026-09-08 on [`examples/proofs`](../examples/proofs), Kani 0.67.0,
+solver time only (the dependency-tree compile is shared and cached).
+
+**Scalar storage — seconds.**
+
+| Harness | Time |
+| --- | --- |
+| `counter::starts_at_zero` | 10s |
+| `counter::set_then_get_roundtrips` | 26s |
+| `counter::roundtrip_holds_for_any_transaction_context` | 32s |
+| `counter::add_number_is_exactly_wrapping` | 43s |
+| `counter::increment_wraps_at_max` | 44s |
+| `counter::add_number_can_decrease_the_counter` | 47s |
+| `vault::ownership_cannot_be_claimed_twice` | 46s |
+| `vault::owner_can_transfer_ownership` | 56s |
+| `counter::add_number_is_exact_when_it_does_not_overflow` | 57s |
+| `vault::only_owner_can_transfer_ownership` | 61s |
+
+**Mappings — minutes, scaling with the number of accesses.**
+
+| Harness | Mapping work | Time |
+| --- | --- | --- |
+| `vault::credit_then_read_roundtrips` | 1 account, 1 write | 181s |
+| `vault::credit_can_silently_wrap` | 1 account, 2 writes | 491s |
+| `vault::credit_checked_never_wraps` | 1 account, 2 guarded writes | 501s |
+| `vault::distinct_accounts_do_not_alias` | 2 accounts, 2 guarded writes | **1064s** |
+| `vault::total_tracks_the_sum_of_balances` | 2 accounts + conservation assertions | did not finish in 23 min |
+
+14 of 15 harnesses verify. Only the heaviest — two-account conservation — has
+not been seen to converge, and it was never given more than 23 minutes, so
+"slow" is established but "intractable" is not.
+
+**Three things follow.**
+
+1. **A full symbolic transaction context is nearly free** — 32s against 26s.
+   Use `SymbolicVM::new()` freely; `concrete_ctx()` is not the optimisation it
+   looks like.
+2. **Access control is cheap.** All three owner-gated proofs land under a
+   minute, because they touch only scalar slots. Proposal property #2 is
+   comfortably in reach.
+3. **Mapping cost tracks the number of accesses, not just their presence** —
+   181s for one write, ~500s for two, ~1064s for two accounts. That is roughly
+   quadratic-looking, which fits the diagnosis below.
+
+**Likely cause, not yet confirmed.** Mapping slot keys are *symbolic* `U256`
+digests, so `SlotStore`'s linear scan performs up to `SLOTS` symbolic 256-bit
+equality comparisons on *every* load and store; more accounts means both more
+scans and more entries to scan against. The counter's slots are small concrete
+numbers, where the same scan is trivial.
+
+Levers, cheapest first:
+
+1. Lower the default `SLOTS` from 16 — most single proofs touch a handful.
+2. Two-tier slot store: concrete scalar slots in a small direct-indexed array,
+   keccak-derived slots in a separate short list.
+3. Narrow balances to `u64`-shaped values where the property is not about the
+   256-bit boundary.
+4. Have the oracle return digests with a concrete discriminator in the high bits
+   so slot comparison can short-circuit. Weakens the model; needs care.
+
+**Confirm before optimising.** Vary `SLOTS` alone and measure — the same staged
+method that found the `TestVM` problem. This is the main open engineering
+question and it gates how large a target is realistic.
+
 ### Superseded: the regex hypothesis
 
 An earlier reading of this file blamed the `lazy_static` `Regex`es in

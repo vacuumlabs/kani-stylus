@@ -123,11 +123,29 @@ only, excluding the shared compile):
 | `add_number_can_decrease_the_counter` | two `U256` | 47s |
 | `add_number_is_exact_when_it_does_not_overflow` | two `U256` + `checked_add` precondition | 57s |
 
-Tens of seconds, not minutes — and note a full symbolic transaction context adds
-only ~6s over a concrete one. The first `cargo kani` in a session pays a few
-minutes to compile the dependency tree; after that it is cached.
+Tens of seconds for scalar storage — and note a full symbolic transaction
+context adds only ~6s over a concrete one, so use `SymbolicVM::new()` freely.
+The first `cargo kani` in a session pays a few minutes to compile the dependency
+tree; after that it is cached.
 
-In rough order of what to reach for when something *is* slow:
+**Mappings are a different regime.** Every mapping access is keyed by a
+*symbolic* digest rather than a small concrete slot number, and cost grows with
+the number of accesses:
+
+| Harness | Mapping work | Time |
+| --- | --- | --- |
+| `vault::credit_then_read_roundtrips` | 1 account, 1 write | 181s |
+| `vault::credit_can_silently_wrap` | 1 account, 2 writes | 491s |
+| `vault::credit_checked_never_wraps` | 1 account, 2 guarded writes | 501s |
+| `vault::distinct_accounts_do_not_alias` | 2 accounts, 2 guarded writes | 1064s |
+| `vault::total_tracks_the_sum_of_balances` | 2 accounts + conservation | not seen to finish (23 min) |
+
+So mapping proofs work — budget minutes, not seconds — and the heaviest
+multi-account property is still open. If you need one, narrow the value type
+first and expect to tune `SLOTS`. This is the main known limitation; see
+[`kb/50-feasibility.md`](../../kb/50-feasibility.md) for the diagnosis.
+
+In rough order of what to reach for when something is slow:
 
 1. **Use the narrowest type the property allows.** If a bug reproduces with
    `u64`-sized balances, prove it there first; widen once it's green.
