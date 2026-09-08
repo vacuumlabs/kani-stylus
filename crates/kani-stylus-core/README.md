@@ -138,53 +138,47 @@ a `kani::cover` for a state you expect to reach, or assert
 
 ## Keeping proofs fast
 
-Solver cost is driven by how wide your symbolic values are, not by how much
-contract code runs. Measured on the counter example (Kani 0.67.0, solver time
-only, excluding the shared compile):
+Solver cost is driven by how wide your symbolic values are and how many storage
+slots you touch, not by how much contract code runs. Measured on the examples
+(Kani 0.67.0, solver time only; the dependency compile is shared and cached).
 
-| Harness | Symbolic inputs | Time |
-| --- | --- | --- |
-| `starts_at_zero` | none | 10s |
-| `set_then_get_roundtrips` | one `U256` | 26s |
-| `roundtrip_holds_for_any_transaction_context` | one `U256` + full context | 32s |
-| `add_number_is_exactly_wrapping` | two `U256` | 43s |
-| `increment_wraps_at_max` | one `U256`, boundary hunt | 44s |
-| `add_number_can_decrease_the_counter` | two `U256` | 47s |
-| `add_number_is_exact_when_it_does_not_overflow` | two `U256` + `checked_add` precondition | 57s |
+**Scalar storage — seconds.**
 
-Tens of seconds for scalar storage — and note a full symbolic transaction
-context adds only ~6s over a concrete one, so use `SymbolicVM::new()` freely.
-The first `cargo kani` in a session pays a few minutes to compile the dependency
-tree; after that it is cached.
+| Harness | Time |
+| --- | --- |
+| `counter::starts_at_zero` | 12s |
+| `counter::set_then_get_roundtrips` | 39s |
+| `counter::add_number_is_exact_when_it_does_not_overflow` | 65s |
+| `vault::only_owner_can_transfer_ownership` | 72s |
+| `counter::mul_number_can_wrap` | 80s |
 
-**Mappings are a different regime.** Every mapping access is keyed by a
-*symbolic* digest rather than a small concrete slot number, and cost grows with
-the number of accesses:
+**Mappings — minutes, growing with the number of accesses.**
 
 | Harness | Mapping work | Time |
 | --- | --- | --- |
-| `vault::credit_then_read_roundtrips` | 1 account, 1 write | 181s |
-| `vault::credit_can_silently_wrap` | 1 account, 2 writes | 491s |
-| `vault::credit_checked_never_wraps` | 1 account, 2 guarded writes | 501s |
-| `vault::distinct_accounts_do_not_alias` | 2 accounts, 2 guarded writes | 1064s |
-| `vault::total_tracks_the_sum_of_balances` | 2 accounts + conservation | not seen to finish (23 min) |
+| `vault::credit_then_read_roundtrips` | 1 account, 1 write | 238s |
+| `vault::credit_can_silently_wrap` | 1 account, 2 writes | 561s |
+| `vault::credit_checked_never_wraps` | 1 account, 2 guarded writes | 675s |
+| `vault::distinct_accounts_do_not_alias` | 2 accounts, 2 guarded writes | 1236s |
 
-So mapping proofs work — budget minutes, not seconds — and the heaviest
-multi-account property is still open. If you need one, narrow the value type
-first and expect to tune `SLOTS`. This is the main known limitation; see
-[`kb/50-feasibility.md`](../../kb/50-feasibility.md) for the diagnosis.
+A property spanning several mapping accounts is the current limit: a two-account
+`total == balance(a) + balance(b)` conservation proof has not been seen to
+converge. See [`kb/50-feasibility.md`](../../kb/50-feasibility.md).
 
 In rough order of what to reach for when something is slow:
 
 1. **Use the narrowest type the property allows.** If a bug reproduces with
-   `u64`-sized balances, prove it there first; widen once it's green.
-   Full-width `U256` is right when the property is *about* the boundary — the
-   overflow proofs in the examples have to be full width.
-2. **Prefer `concrete_ctx()`** unless the property depends on sender, value or
-   block.
-3. **Constrain hard with `kani::assume`.** Every precondition you state is
-   input space the solver doesn't explore.
-4. Keep `SLOTS` and the keccak bound just large enough.
+   `u64`-sized balances, prove it there first; widen once it's green. Full-width
+   `U256` is right when the property is *about* the boundary — the overflow
+   proofs in the examples have to be full width.
+2. **Reach for `concrete_ctx()` on mapping-heavy proofs.** A fully symbolic
+   transaction context costs only ~6s on scalar proofs, so `new()` is the right
+   default there — but it adds 15–35% to mapping proofs, where it is worth
+   dropping if the property doesn't depend on the caller.
+3. **Constrain hard with `kani::assume`.** Every precondition you state is input
+   space the solver doesn't explore.
+4. Keep `SLOTS` just large enough; each extra slot costs a symbolic 256-bit
+   comparison on every load and store.
 5. Iterate with `--harness <name>`; only run the full suite when you mean it.
 
 ## What is and isn't modelled

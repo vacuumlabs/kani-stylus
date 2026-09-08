@@ -336,6 +336,189 @@ code rather than a convenient subset.
 
 ### Finding: mappings are viable but an order of magnitude slower
 
+All numbers measured 2026-09-08 on the two example projects, Kani 0.67.0,
+solver time only (the dependency-tree compile is shared and cached).
+**14 of 14 harnesses verify** — 7 in `examples/counter` (380s total), 7 in
+`examples/vault` (3155s total).
+
+**Scalar storage — seconds.**
+
+| Harness | Time |
+| --- | --- |
+| `counter::starts_at_zero` | 12s |
+| `counter::set_then_get_roundtrips` | 39s |
+| `counter::add_from_msg_value_adds_exactly_the_value_sent` | 49s |
+| `counter::increment_wraps_at_max` | 50s |
+| `counter::add_number_can_decrease_the_counter` | 55s |
+| `counter::add_number_is_exact_when_it_does_not_overflow` | 65s |
+| `vault::ownership_cannot_be_claimed_twice` | 68s |
+| `vault::only_owner_can_transfer_ownership` | 72s |
+| `counter::mul_number_can_wrap` | 80s |
+| `vault::owner_can_transfer_ownership` | 88s |
+
+**Mappings — minutes, scaling with the number of accesses.**
+
+| Harness | Mapping work | Time |
+| --- | --- | --- |
+| `vault::credit_then_read_roundtrips` | 1 account, 1 write | 238s |
+| `vault::credit_can_silently_wrap` | 1 account, 2 writes | 561s |
+| `vault::credit_checked_never_wraps` | 1 account, 2 guarded writes | 675s |
+| `vault::distinct_accounts_do_not_alias` | 2 accounts, 2 guarded writes | 1236s |
+
+**Three things follow.**
+
+1. **Access control is cheap.** Every owner-gated proof lands under 90s, because
+   they touch only scalar slots. Proposal property #2 is comfortably in reach.
+2. **Mapping cost tracks the number of accesses**, not merely their presence:
+   238s → 561s → 1236s. Roughly quadratic-looking, which fits the diagnosis
+   below.
+3. **Symbolic context is cheap on scalars, not on mappings.** Earlier
+   measurements with a concrete context gave 181s / 491s / 501s / 1064s for the
+   four mapping proofs above; switching them to a fully symbolic
+   `SymbolicVM::new()` cost **+15% to +35%**. On scalar proofs the same change
+   costs ~6s. So "use `new()` freely" holds for scalar properties; on
+   mapping-heavy ones, `concrete_ctx()` is a real lever when the property does
+   not depend on the caller.
+
+**Still open: multi-account conservation.** A harness asserting
+`total == balance(a) + balance(b)` across two accounts was not seen to converge
+in 23 minutes. `distinct_accounts_do_not_alias` shows two-account mapping proofs
+*can* finish, so this is a matter of degree rather than a wall — but it is the
+one property in the original ERC-20 pitch that has not been demonstrated.
+
+**Likely cause, not yet confirmed.** Mapping slot keys are *symbolic* `U256`
+digests, so `SlotStore`'s linear scan performs up to `SLOTS` symbolic 256-bit
+equality comparisons on *every* load and store; more accounts means both more
+scans and more entries to scan against. The counter's slots are small concrete
+numbers, where the same scan is trivial.
+
+Levers, cheapest first:
+
+1. Lower the default `SLOTS` from 16 — most single proofs touch a handful.
+2. Two-tier slot store: concrete scalar slots in a small direct-indexed array,
+   keccak-derived slots in a separate short list.
+3. Narrow balances to `u64`-shaped values where the property is not about the
+   256-bit boundary.
+4. Have the oracle return digests with a concrete discriminator in the high bits
+   so slot comparison can short-circuit. Weakens the model; needs care.
+
+**Confirm before optimising.** Vary `SLOTS` alone and measure — the same staged
+method that found the `TestVM` problem. This is the main open engineering
+question and it gates how large a target is realistic.
+
+### Finding: Kani does NOT catch `U256` overflow for free
+
+The proposal lists "arithmetic overflow absence" as something Kani checks
+automatically. **For Stylus contracts this is false**, and the reason matters.
+
+`alloy`'s `U256` is `ruint::Uint<256, 4>`, and `ruint/src/add.rs` ends with:
+
+```rust
+impl_bin_op!(Add, add, AddAssign, add_assign, wrapping_add);
+impl_bin_op!(Sub, sub, SubAssign, sub_assign, wrapping_sub);
+```
+
+So `a + b` on `U256` **is** `wrapping_add`. It never panics. Internally it
+combines limbs with `carrying_add` on `u64`, which is explicitly wrapping, so
+Kani's built-in overflow checks — which only fire on primitive integer
+operations — see nothing to complain about either.
+
+Measured: a harness applying `add_number` to two fully symbolic `U256` values
+reports `0 of 1043 failed`. There is no panic to find.
+
+Consequences:
+
+- **The stock Stylus counter template silently wraps.** `add_number` and
+  `mul_number` in `examples/counter` have no overflow protection.
+  Solidity >= 0.8 would revert here; Rust on Stylus does not.
+- Every Stylus contract doing token arithmetic with bare `+`/`-`/`*` on `U256`
+  has the same exposure, and neither `cargo test` nor a naive `cargo kani` run
+  will surface it.
+- **This raises the project's value.** kani-stylus is not just a plumbing layer
+  that makes Kani runnable; it has to ship the arithmetic properties Kani cannot
+  infer. "Prove your token math doesn't wrap" is a concrete, demonstrable pitch
+  with a real counterexample behind it.
+
+Practically, proof obligations should take the shape of `d3` in the spike:
+`kani::assume(a.checked_add(b).is_some())` for the intended-behaviour proof,
+plus a separate harness showing the unguarded version wraps.
+
+### Result: defect detection works
+
+The other half of feasibility — a verifier that cannot fail is worthless.
+
+| Harness | Intent | Result |
+| --- | --- | --- |
+| `d1_add_number_can_decrease_the_counter` | must FAIL: adding can decrease the counter | ✅ 1 of 1110 checks failed, panic found as expected, 26s |
+| `d2_add_number_is_exactly_wrapping` | pins the semantics: result `== a.wrapping_add(b)` | ✅ 25s |
+| `d3_add_number_exact_when_no_overflow` | control: exact once overflow is assumed away | ✅ 34s |
+
+`d1` is a genuine bug in the stock `cargo stylus new` template, found
+automatically over the full 2^256 input space. `d2` proves it is precisely a
+wrap rather than some other fault, and `d3` shows the guarded version is exact —
+together they make the demo airtight rather than a single red line.
+
+**Concrete playback works**, and is the demo asset. It needs the unstable flag:
+
+```bash
+cargo kani -Z concrete-playback --concrete-playback=print \
+    --harness d1_add_number_can_decrease_the_counter
+```
+
+Kani emits a runnable `#[test]` carrying the 64 witness bytes (two `[u8; 32]`
+draws). Decoded, the counterexample it found is:
+
+```
+a       = 115792089237316195420432434140994567471862513504418138526629138312939329028097
+b       = 115792089237316195414155332405607886707005876980447656720081318813958861225983
+a + b   >= 2^256, so it wraps to
+result  = 115792089237316195411016781537914546325598405819225231207252873118985060614144
+```
+
+`result < a` — the counter went *down* after adding to it. That is the whole
+pitch in one screenshot: a real bug in the stock template, an exact witness, and
+a test you can paste into the repo, all from one 26-second command.
+
+### Result: it works in an unmodified `cargo stylus new` project
+
+The point of the tool is that a Stylus developer adds it to the project they
+already have. Verified 2026-09-08 on
+[`examples/counter`](../examples/counter) — the stock template, with
+proofs added to `src/lib.rs` beside its existing `#[cfg(test)]` module and three
+lines of `Cargo.toml`. No restructuring, no separate crate.
+
+**7 of 7 harnesses verify, 380s for the suite:**
+
+| Harness | Time |
+| --- | --- |
+| `starts_at_zero` | 12s |
+| `set_then_get_roundtrips` | 39s |
+| `add_from_msg_value_adds_exactly_the_value_sent` (symbolic `msg_value`) | 49s |
+| `increment_wraps_at_max` | 50s |
+| `add_number_can_decrease_the_counter` | 55s |
+| `add_number_is_exact_when_it_does_not_overflow` | 65s |
+| `mul_number_can_wrap` | 80s |
+
+**The ordinary workflow is provably unaffected:**
+
+| Command | Result |
+| --- | --- |
+| `cargo test` | passes — the template's own `test_counter` |
+| `cargo build --target wasm32-unknown-unknown --release` | 18.5 KB cdylib; `strings` shows no `kani` symbols and no `stylus-test` panic stub, and the real `vm_hooks` imports are intact |
+| `cargo stylus check` | compiles and sizes the contract at 6.0 KB. Its activation step needs a Stylus RPC (defaults to `localhost:8547`); against a devnode it reported a wasm data fee of 0.000071 ETH, and offline it stops after the size report |
+| `cargo kani --features proofs` | the 7 harnesses above |
+
+See [20-stylus.md](20-stylus.md#packaging-how-verification-attaches-to-a-real-contract)
+for why the feature gate is mandatory rather than stylistic.
+
+**Three wrapping methods, not one.** Verifying the real template rather than a
+copy surfaced that `add_number`, `mul_number` *and* `increment` all wrap
+silently. The earlier hand-copied contract omitted `mul_number` and
+`add_from_msg_value` entirely — a good argument for pointing the tool at real
+code rather than a convenient subset.
+
+### Finding: mappings are viable but an order of magnitude slower
+
 Measured 2026-09-08 on [`examples/vault`](../examples/vault), Kani 0.67.0,
 solver time only (the dependency-tree compile is shared and cached).
 

@@ -84,9 +84,10 @@ git clone --depth 1 https://github.com/model-checking/kani vendor/kani  # vendor
       wired in with `#[kani::stub]`: Stylus mappings call
       `stylus_sdk::crypto::keccak` directly, *not* through the `Host` trait, so
       implementing `native_keccak256` alone is not enough.
-- [x] **Worked examples** in [`examples/vault`](../examples/vault) — a
-      verified counter (with the real overflow bug and its counterexample) and a
-      vault covering access control and mappings.
+- [x] **Worked examples**, both real `cargo stylus new` projects with proofs
+      added in place: [`examples/counter`](../examples/counter) (7 harnesses,
+      380s) and [`examples/vault`](../examples/vault) (7 harnesses, 3155s).
+      14 of 14 verify.
 - [ ] Sharpen the usability story: a short "write your first proof" walkthrough,
       and a single command that runs the whole suite.
 - [ ] A more substantial verification target. ERC-20 is a plausible stepping
