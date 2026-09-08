@@ -15,12 +15,12 @@ Targets: `wasm32-unknown-unknown` is installed for 1.91.0.
 
 ## Gotchas
 
-**`rust-toolchain.toml` vs. Kani.** Kani drives its own bundled nightly. A crate
-that pins a toolchain (as `counter` pins 1.91.0 for the wasm target) may fight
-`cargo kani`. If a new verification crate hits toolchain errors, first try
-keeping it *out* of any directory carrying a `rust-toolchain.toml`, or override
-with `RUSTUP_TOOLCHAIN`. Worth confirming deliberately when the workspace is set
-up — a workspace root `rust-toolchain.toml` would apply to the proof crates too.
+**`rust-toolchain.toml` vs. Kani — resolved, not a problem.** Kani drives its own
+bundled nightly, and it was suspected that a crate pinning a toolchain (as
+`counter` pins 1.91.0 for the wasm target) would fight `cargo kani`. Tested
+2026-09-08: `cargo kani --features proofs` runs fine inside
+`stylus-samples/counter` with its pin in place. Don't restructure a project to
+avoid this.
 
 **Kani cannot target wasm.** Verification runs natively (x86_64), against
 `--features stylus-test`. We are proving properties of the *Rust source*, not of

@@ -8,6 +8,16 @@ alloy-primitives = "1.5.7"
 alloy-sol-types = "1.5.7"
 stylus-sdk = "0.10.9"
 
+# Symbolic host for `cargo kani`. Optional, and pulled in only by the `proofs`
+# feature below, so it is absent from ordinary builds.
+[dependencies.kani-stylus-core]
+path = "../../crates/kani-stylus-core"
+optional = true
+
+# Enables the in-memory TestVM for `cargo test`, per the Stylus testing guide.
+[dev-dependencies]
+stylus-sdk = { version = "0.10.9", features = ["stylus-test"] }
+
 [lib]
 crate-type = ["lib", "cdylib"]
 
@@ -17,6 +27,15 @@ export-abi = ["stylus-sdk/export-abi"]
 debug = ["stylus-sdk/debug"]
 mini-alloc = ["stylus-sdk/mini-alloc"]
 contract-client-gen = []
+
+# Verification only: `cargo kani --features proofs`.
+#
+# Off by default and deliberately so. `stylus-test` swaps the real ArbOS host
+# calls for a mockable one -- with it enabled, every hostio becomes a `panic!`,
+# so a contract built with this feature on would be broken on chain. Keeping it
+# behind an opt-in feature means `cargo build` and `cargo stylus check` are
+# untouched.
+proofs = ["dep:kani-stylus-core", "stylus-sdk/stylus-test"]
 
 [profile.release]
 codegen-units = 1

@@ -11,10 +11,12 @@ like "transfers conserve total supply" and "only the owner can call this"
 instead of testing them one input at a time.
 
 **Status: working.** [`crates/kani-stylus-core`](crates/kani-stylus-core/) gives
-your contract a symbolic ArbOS host; [`examples/proofs`](examples/proofs/) shows
-it verifying a counter and a vault, including mappings and owner-gated methods.
-It finds real bugs — the stock `cargo stylus new` template has a silent `U256`
-overflow, and Kani produces the exact witness.
+your contract a symbolic ArbOS host, and it drops into an ordinary
+`cargo stylus new` project — [`stylus-samples/counter`](stylus-samples/counter/)
+is exactly that, with proofs added alongside its unit tests and `cargo test`,
+`cargo build` and `cargo stylus check` all unaffected. It finds real bugs: that
+stock template has a silent `U256` overflow, and Kani produces the exact
+witness.
 
 [`proposal.md`](proposal.md) is the original pitch; parts of it are superseded
 by what the code turned out to need — see [`kb/50-feasibility.md`](kb/50-feasibility.md).
@@ -52,40 +54,51 @@ cargo stylus check                                    # would it activate on-cha
 ### 3. Run the proofs
 
 ```bash
-./verify.sh                                        # the whole suite
-./verify.sh set_then_get_roundtrips                # one harness
-./verify.sh --playback add_number_can_decrease_the_counter
+./verify.sh                                        # every project
+./verify.sh counter                                # just the real contract
+./verify.sh -h set_then_get_roundtrips             # one harness
+./verify.sh --playback credit_can_silently_wrap    # print a counterexample
 ```
 
 The first run compiles the dependency tree through the Kani compiler and takes a
-few minutes; after that individual harnesses are seconds.
+few minutes; individual harnesses are seconds after that.
 
-The one to look at first is
-`counter::proofs::add_number_can_decrease_the_counter` in
-[`examples/proofs/src/counter.rs`](examples/proofs/src/counter.rs). It proves
-that the stock Stylus counter template can be made to *shrink* by adding to it,
-because `alloy`'s `U256 + U256` is `wrapping_add` and never panics. `--playback`
-turns that into a runnable test with the exact values.
+#### It goes in your normal Stylus project
 
-Writing your own: see the [crate README](crates/kani-stylus-core/README.md).
-The shape is
+[`stylus-samples/counter`](stylus-samples/counter/) is an ordinary
+`cargo stylus new` contract. Proofs live in `src/lib.rs` next to the
+`#[cfg(test)]` module, and the whole setup is three lines of `Cargo.toml`:
 
-```rust
-#[cfg(kani)]
-mod proofs {
-    use kani_stylus_core::{any_u256, SymbolicVM};
-    use super::*;
+```toml
+[dependencies]
+kani-stylus-core = { path = "...", optional = true }
 
-    #[kani::proof]
-    fn my_invariant() {
-        let vm = SymbolicVM::concrete_ctx();
-        let mut c = MyContract::from(&vm);
-        let x = any_u256();
-        kani::assume(/* precondition */ true);
-        // ... call methods, then assert the property
-    }
-}
+[features]
+proofs = ["dep:kani-stylus-core", "stylus-sdk/stylus-test"]
 ```
+
+Everything stays opt-in, so the ordinary workflow is untouched — verified on
+that project:
+
+| Command | Result |
+| --- | --- |
+| `cargo test` | passes (the template's own `test_counter`) |
+| `cargo build --target wasm32-unknown-unknown --release` | 18.5 KB cdylib, no kani or `stylus-test` symbols |
+| `cargo stylus check` | passes — 6.0 KB, would activate on chain |
+| `cargo kani --features proofs` | 7 harnesses |
+
+`stylus-test` **must** stay behind that feature: it replaces the real ArbOS host
+calls with a mockable one, so a contract built with it enabled would `panic!` on
+every hostio. The `proofs` feature keeps it out of every non-verification build.
+
+Where a unit test pins one input, a proof covers the whole space — and on this
+contract that finds a real bug. `add_number_can_decrease_the_counter` shows the
+stock template can be made to *shrink* by adding to it, because `alloy`'s
+`U256 + U256` is `wrapping_add` and never panics. `--playback` prints the exact
+values.
+
+[`examples/proofs`](examples/proofs/) covers what a counter can't: mappings and
+owner-gated access control.
 
 ### 4. Learn the two halves
 
@@ -132,12 +145,13 @@ proposal.md        the hackathon / grant pitch
 kb/                knowledge base for humans and agents
 crates/
   kani-stylus-core/  the library: SymbolicVM, slot store, keccak oracle
+stylus-samples/
+  counter/         a real `cargo stylus new` contract, with proofs in place
+                   -- the primary example
 examples/
-  proofs/          worked examples — counter and vault, fully verified
+  proofs/          a vault: mappings and access control
 spikes/
   kani-smoke/      the original feasibility probe, kept for the record
-stylus-samples/
-  counter/         deployable Stylus contract from `cargo stylus new`
 ```
 
 ## License

@@ -1,29 +1,36 @@
 #!/usr/bin/env bash
-# Run the kani-stylus proof suite.
+# Run the kani-stylus proof suites.
 #
-#   ./verify.sh                     every harness in examples/proofs
-#   ./verify.sh <harness-substring>  just the matching ones
-#   ./verify.sh --playback <harness> re-run one harness and print the
-#                                    counterexample as a runnable #[test]
+#   ./verify.sh                      every harness in every project
+#   ./verify.sh counter              just stylus-samples/counter
+#   ./verify.sh examples             just examples/proofs
+#   ./verify.sh -h <harness>         one harness (searches both projects)
+#   ./verify.sh --playback <harness> print the counterexample as a runnable test
 #
-# -Z stubbing is always on: the mapping proofs need the keccak stub, and it is
-# inert for harnesses that don't use it.
+# Note `--features proofs` on the counter: that project is a real, deployable
+# Stylus contract, so the verification dependencies are opt-in and its ordinary
+# build is untouched. See stylus-samples/counter/Cargo.toml.
 set -euo pipefail
+cd "$(dirname "$0")"
 
-cd "$(dirname "$0")/examples/proofs"
+COUNTER=(--manifest-path stylus-samples/counter/Cargo.toml --features proofs)
+EXAMPLES=(--manifest-path examples/proofs/Cargo.toml)
+COMMON=(-Z stubbing --output-format terse)
 
-FLAGS=(-Z stubbing --output-format terse)
+case "${1:-all}" in
+  --playback)
+      [[ -n "${2:-}" ]] || { echo "usage: $0 --playback <harness>" >&2; exit 2; }
+      exec cargo kani "${EXAMPLES[@]}" -Z stubbing -Z concrete-playback \
+          --concrete-playback=print --harness "$2" ;;
+  -h) [[ -n "${2:-}" ]] || { echo "usage: $0 -h <harness>" >&2; exit 2; }
+      cargo kani "${COUNTER[@]}"  "${COMMON[@]}" --harness "$2" && exit 0
+      exec cargo kani "${EXAMPLES[@]}" "${COMMON[@]}" --harness "$2" ;;
+  counter)  exec cargo kani "${COUNTER[@]}"  "${COMMON[@]}" ;;
+  examples) exec cargo kani "${EXAMPLES[@]}" "${COMMON[@]}" ;;
+esac
 
-if [[ "${1:-}" == "--playback" ]]; then
-    [[ -n "${2:-}" ]] || { echo "usage: $0 --playback <harness>" >&2; exit 2; }
-    exec cargo kani -Z stubbing -Z concrete-playback \
-        --concrete-playback=print --harness "$2"
-fi
-
-if [[ -n "${1:-}" ]]; then
-    exec cargo kani "${FLAGS[@]}" --harness "$1"
-fi
-
-echo "Verifying all harnesses. First run compiles the dependency tree and"
-echo "takes a few minutes; later runs are much faster."
-exec cargo kani "${FLAGS[@]}"
+echo "### stylus-samples/counter  (a real cargo-stylus project)"
+cargo kani "${COUNTER[@]}" "${COMMON[@]}"
+echo
+echo "### examples/proofs  (counter + vault, mappings and access control)"
+cargo kani "${EXAMPLES[@]}" "${COMMON[@]}"

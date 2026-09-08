@@ -1,21 +1,24 @@
-//! Worked examples for `kani-stylus-core`.
+//! Features the stock counter can't demonstrate.
 //!
-//! Two contracts, verified:
+//! The primary example is [`stylus-samples/counter`](../../../stylus-samples/counter),
+//! a real `cargo stylus new` project with proofs added in place — start there
+//! to see how kani-stylus drops into an ordinary Stylus setup.
 //!
-//! - [`counter`] — the stock `cargo stylus new` template. Storage round-trips,
-//!   and a real silent-overflow bug that Kani finds with a concrete witness.
-//! - [`vault`] — owner-gated methods over a symbolic caller, plus mappings,
-//!   which exercise the keccak oracle.
+//! This crate covers what that contract has no occasion for:
+//!
+//! - **access control** over a symbolic caller (`msg_sender`);
+//! - **mappings**, whose slots are keccak-derived and so exercise the hash
+//!   oracle in `kani_stylus_core::keccak`.
+//!
+//! It is proofs-only and never deployed, so unlike a real contract it enables
+//! `stylus-test` unconditionally rather than behind a feature.
 //!
 //! ```bash
-//! cargo kani -Z stubbing --output-format terse          # everything
-//! cargo kani --harness counter::proofs::set_then_get_roundtrips
+//! cargo kani -Z stubbing --output-format terse
 //! ```
 //!
-//! `-Z stubbing` is needed by the mapping proofs; harnesses without mappings
-//! run without it.
+//! `-Z stubbing` is required: the mapping proofs stub `stylus_sdk::crypto::keccak`.
 
 extern crate alloc;
 
-pub mod counter;
 pub mod vault;

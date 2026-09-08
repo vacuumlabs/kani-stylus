@@ -271,6 +271,44 @@ result  = 1157920892373161954110167815379145463255984058192252312072528731189850
 pitch in one screenshot: a real bug in the stock template, an exact witness, and
 a test you can paste into the repo, all from one 26-second command.
 
+### Result: it works in an unmodified `cargo stylus new` project
+
+The point of the tool is that a Stylus developer adds it to the project they
+already have. Verified 2026-09-08 on
+[`stylus-samples/counter`](../stylus-samples/counter) — the stock template, with
+proofs added to `src/lib.rs` beside its existing `#[cfg(test)]` module and three
+lines of `Cargo.toml`. No restructuring, no separate crate.
+
+**7 of 7 harnesses verify, 380s for the suite:**
+
+| Harness | Time |
+| --- | --- |
+| `starts_at_zero` | 12s |
+| `set_then_get_roundtrips` | 39s |
+| `add_from_msg_value_adds_exactly_the_value_sent` (symbolic `msg_value`) | 49s |
+| `increment_wraps_at_max` | 50s |
+| `add_number_can_decrease_the_counter` | 55s |
+| `add_number_is_exact_when_it_does_not_overflow` | 65s |
+| `mul_number_can_wrap` | 80s |
+
+**The ordinary workflow is provably unaffected:**
+
+| Command | Result |
+| --- | --- |
+| `cargo test` | passes — the template's own `test_counter` |
+| `cargo build --target wasm32-unknown-unknown --release` | 18.5 KB cdylib; `strings` shows no `kani` symbols and no `stylus-test` panic stub, and the real `vm_hooks` imports are intact |
+| `cargo stylus check` | passes — 6.0 KB, would activate on chain |
+| `cargo kani --features proofs` | the 7 harnesses above |
+
+See [20-stylus.md](20-stylus.md#packaging-how-verification-attaches-to-a-real-contract)
+for why the feature gate is mandatory rather than stylistic.
+
+**Three wrapping methods, not one.** Verifying the real template rather than a
+copy surfaced that `add_number`, `mul_number` *and* `increment` all wrap
+silently. The earlier hand-copied contract omitted `mul_number` and
+`add_from_msg_value` entirely — a good argument for pointing the tool at real
+code rather than a convenient subset.
+
 ### Finding: mappings are viable but an order of magnitude slower
 
 Measured 2026-09-08 on [`examples/proofs`](../examples/proofs), Kani 0.67.0,

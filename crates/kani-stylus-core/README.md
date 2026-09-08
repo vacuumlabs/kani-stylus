@@ -26,15 +26,32 @@ That proof **fails** on the stock `cargo stylus new` template, with a witness.
 
 ## Setup
 
+Add this to the project `cargo stylus new` gave you — no restructuring needed:
+
 ```toml
 [dependencies]
-# `stylus-test` is what makes the generic `From<&H>` impl exist and makes `VM`
-# hold a `Box<dyn Host>`. It does not mean you use `TestVM`.
-stylus-sdk = { version = "0.10.9", features = ["stylus-test"] }
+kani-stylus-core = { path = "path/to/kani-stylus-core", optional = true }
 
 [dev-dependencies]
-kani-stylus-core = { path = "../crates/kani-stylus-core" }
+# For `cargo test`, per the Stylus testing guide.
+stylus-sdk = { version = "0.10.9", features = ["stylus-test"] }
+
+[features]
+# Verification only. Off by default.
+proofs = ["dep:kani-stylus-core", "stylus-sdk/stylus-test"]
 ```
+
+Two things about that shape are load-bearing, and both are easy to get wrong:
+
+- **`stylus-test` must never be on in a real build.** It swaps the ArbOS host
+  calls for a mockable one, and with it enabled every hostio becomes a
+  `panic!` — a contract built that way is broken on chain. Keeping it behind an
+  opt-in feature leaves `cargo build` and `cargo stylus check` untouched.
+- **`kani-stylus-core` must be a regular optional dependency, not a
+  dev-dependency.** `cargo kani` builds the *lib* target, where
+  dev-dependencies aren't available. (`stylus-sdk`'s `stylus-test` gets pulled
+  in for verification by the `proofs` feature above, and separately by the
+  dev-dependency for `cargo test`.)
 
 Put proofs behind `#[cfg(kani)]` so they don't affect normal builds:
 
@@ -47,14 +64,26 @@ mod proofs {
 }
 ```
 
+A guard makes the feature impossible to forget:
+
+```rust
+#[cfg(all(kani, not(feature = "proofs")))]
+compile_error!("proofs need the `proofs` feature: cargo kani --features proofs");
+```
+
 Then:
 
 ```bash
-cargo kani --output-format terse                 # all harnesses
-cargo kani --harness proofs::my_property         # just one
-cargo kani -Z stubbing                           # required if you use mappings
-cargo kani -Z concrete-playback --concrete-playback=print --harness <h>
+cargo kani --features proofs --output-format terse        # all harnesses
+cargo kani --features proofs --harness proofs::my_property
+cargo kani --features proofs -Z stubbing                  # if you use mappings
+cargo kani --features proofs -Z concrete-playback \
+    --concrete-playback=print --harness <h>
 ```
+
+Your ordinary workflow is unchanged: `cargo test`,
+`cargo build --target wasm32-unknown-unknown --release` and `cargo stylus check`
+all behave exactly as before, because none of them enable `proofs`.
 
 ## API
 
@@ -184,6 +213,11 @@ out at 420s. The same proof against `SymbolicVM` takes 6s. See
 
 ## Examples
 
-[`examples/proofs`](../../examples/proofs) is the place to start — a verified
-counter (including the real overflow bug) and a vault with owner-gated methods
-and mappings.
+**[`stylus-samples/counter`](../../stylus-samples/counter)** is the place to
+start: an ordinary `cargo stylus new` contract with proofs added in place, next
+to its existing unit tests. `cargo test`, `cargo build` and `cargo stylus check`
+behave exactly as they did before — confirmed by inspecting the built wasm for
+`kani` and `stylus-test` symbols (there are none).
+
+[`examples/proofs`](../../examples/proofs) covers what a counter cannot: a vault
+with owner-gated methods over a symbolic caller, and mappings.

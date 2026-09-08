@@ -29,16 +29,18 @@ kani-stylus/
 ├── crates/
 │   └── kani-stylus-core/  the library: SymbolicVM, slot store, keccak oracle
 ├── examples/
-│   └── proofs/          worked examples — counter and vault, fully verified
+│   └── proofs/          a vault: mappings and access control
 ├── spikes/
 │   └── kani-smoke/      the original feasibility probe (kept for the record)
 └── stylus-samples/
-    └── counter/         working Stylus contract, built with `cargo stylus new`
+    └── counter/         a real `cargo stylus new` contract with proofs added
+                         in place — the primary example
 ```
 
-`stylus-samples/counter` and `spikes/kani-smoke` are deliberately **excluded**
-from the workspace: the former pins its own toolchain for the wasm32 target,
-which would fight `cargo kani`.
+`stylus-samples/counter` and `spikes/kani-smoke` are **excluded** from the
+workspace so the counter stays a standalone, deployable project — which is the
+point of it. Its `rust-toolchain.toml` pin turned out **not** to interfere with
+`cargo kani`, so that is not a reason to keep it out.
 
 ### Where new code should go
 

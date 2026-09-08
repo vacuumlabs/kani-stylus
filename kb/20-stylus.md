@@ -146,6 +146,54 @@ Two consequences for a symbolic model:
   Start with a small association list (say 8–16 slots) of
   `(key, value)` pairs, unwritten keys reading as a fresh `kani::any()` or zero.
 
+## Packaging: how verification attaches to a real contract
+
+Verified 2026-09-08 against `stylus-samples/counter`, an unmodified
+`cargo stylus new` project.
+
+Two constraints interact, and getting either wrong is bad:
+
+**1. `cargo kani` builds the `lib` target, so dev-dependencies are invisible.**
+Putting `kani-stylus-core` in `[dev-dependencies]` fails with
+`unresolved import kani_stylus_core`. It must be a regular dependency.
+
+**2. `stylus-sdk/stylus-test` must never be on in a deployable build.** That
+feature swaps the real ArbOS host for a mockable one — `hostio.rs` expands every
+host call to `panic!("HostIO functions are not available in stylus-test")`. A
+contract compiled with it enabled is broken on chain. But verification *needs*
+it, because it is what makes the generic `From<&H>` impl exist and makes `VM`
+hold a `Box<dyn Host>`.
+
+The resolution is an opt-in feature that turns on both at once:
+
+```toml
+[dependencies]
+kani-stylus-core = { path = "...", optional = true }
+
+[dev-dependencies]                      # for `cargo test`, per the Stylus docs
+stylus-sdk = { version = "0.10.9", features = ["stylus-test"] }
+
+[features]
+proofs = ["dep:kani-stylus-core", "stylus-sdk/stylus-test"]
+```
+
+with `cargo kani --features proofs`, and a guard so the feature can't be
+forgotten:
+
+```rust
+#[cfg(all(kani, not(feature = "proofs")))]
+compile_error!("proofs need the `proofs` feature: cargo kani --features proofs");
+```
+
+**Confirmed non-invasive.** On that project: `cargo test` passes, the release
+wasm is a 18.5 KB cdylib containing no `kani` symbols and no `stylus-test` panic
+stub (checked with `strings`) while still importing the real `vm_hooks`, and
+`cargo stylus check` passes at 6.0 KB.
+
+**The `rust-toolchain.toml` pin is a non-issue.** The template pins Rust 1.91.0
+for the wasm target; `cargo kani` drives its own toolchain regardless and was
+unaffected. An earlier note in this KB treated this as a risk — it isn't.
+
 ## Mappings hash outside the `Host` trait
 
 A trap worth knowing, verified 2026-09-08. `stylus-sdk/src/storage/map.rs`
