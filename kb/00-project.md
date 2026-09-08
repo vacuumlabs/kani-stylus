@@ -54,7 +54,7 @@ harness in one run, which is deliverable #4 above.
 
 ### On vendoring the Kani repo
 
-[`context.md`](../context.md) asked whether to clone
+The project's original scoping notes asked whether to clone
 [model-checking/kani](https://github.com/model-checking/kani) locally.
 **Recommendation: don't commit it.** The book at
 <https://model-checking.github.io/kani/> covers the user-facing surface, and the
@@ -70,13 +70,15 @@ git clone --depth 1 https://github.com/model-checking/kani vendor/kani  # vendor
 
 - [x] Stylus counter contract builds and has passing unit tests
 - [x] Kani 0.67.0 and cargo-stylus 0.10.9 installed locally
-- [x] Feasibility spike: `cargo kani` builds and instruments a Stylus contract
-      under `--features stylus-test` — but a trivial harness did not converge in
-      25 min. Two causes found (runtime regex in `stylus-core`; 268-crate tree
-      incl. tokio/reqwest). See [50-feasibility.md](50-feasibility.md).
-- [ ] **Convergence spike (now the gating risk):** stub out the regex/memchr
-      paths and re-run; then prototype a `mock-host` feature split that avoids
-      pulling in `stylus-test`'s RPC stack
-- [ ] `kani-stylus-core` symbolic host
-- [ ] ERC-20 proof harnesses
+- [x] **Feasibility resolved (2026-09-08).** `TestVM` cannot be verified by Kani
+      at all — `std::HashMap`'s `RandomState` needs a `getrandom` syscall. A
+      purpose-built symbolic host works and is fast: symbolic set-then-get goes
+      from a 25-minute timeout to **14s**. See [50-feasibility.md](50-feasibility.md).
+- [x] `SymbolicVM` prototype implementing the full `stylus_core::Host` trait —
+      [`spikes/kani-smoke/src/symbolic_vm.rs`](../spikes/kani-smoke/src/symbolic_vm.rs)
+- [ ] Promote `SymbolicVM` into a real `kani-stylus-core` crate (workspace,
+      configurable `MAX_SLOTS`, builder for the symbolic context)
+- [ ] Keccak256 as an uninterpreted injective function — **blocks all mapping
+      proofs**, so it blocks ERC-20. Highest-value next piece of work.
+- [ ] ERC-20 proof harnesses (balance conservation, access control)
 - [ ] Injected-defect counterexample demo

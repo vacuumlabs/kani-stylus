@@ -10,8 +10,12 @@ together: give a Stylus contract a symbolic host environment, then prove things
 like "transfers conserve total supply" and "only the owner can call this"
 instead of testing them one input at a time.
 
-Status: early. See [`proposal.md`](proposal.md) for the pitch and
-[`kb/50-feasibility.md`](kb/50-feasibility.md) for what's actually been verified.
+**Status: feasibility confirmed, no library yet.** A working spike proves a
+Stylus contract can be verified by Kani in seconds, and that the approach finds
+real bugs — including a silent `U256` overflow in the stock `cargo stylus new`
+template. See [`spikes/kani-smoke/`](spikes/kani-smoke/) to run it, and
+[`kb/50-feasibility.md`](kb/50-feasibility.md) for the measurements.
+[`proposal.md`](proposal.md) is the original pitch; parts of it are superseded.
 
 ## Getting started
 
@@ -68,16 +72,25 @@ A fuller, categorised link list is in [`kb/10-links.md`](kb/10-links.md).
 reading the SDK source, Kani's limits, and the open feasibility questions.
 It links out to upstream docs rather than duplicating them.
 
-Most important single finding, if you read nothing else: as of stylus-sdk 0.10.9
-the host interface is already a safe Rust trait (`stylus_core::Host`), not raw
-FFI, which changes how this project should be built. See
-[`kb/20-stylus.md`](kb/20-stylus.md) and [`kb/50-feasibility.md`](kb/50-feasibility.md).
+Two findings matter most, if you read nothing else:
+
+- The host interface is already a safe Rust trait (`stylus_core::Host`), not raw
+  FFI — but the SDK's own mock host, `TestVM`, **cannot be verified by Kani**,
+  because `std::HashMap` seeds SipHash through a `getrandom` syscall. A
+  purpose-built symbolic host is mandatory, and it is fast.
+- **`U256` arithmetic silently wraps.** `alloy`/`ruint` define `+` as
+  `wrapping_add`, and Kani's automatic overflow checks don't cover library
+  types. Overflow must be asserted explicitly.
+
+See [`kb/20-stylus.md`](kb/20-stylus.md) and [`kb/50-feasibility.md`](kb/50-feasibility.md).
 
 ## Layout
 
 ```
 proposal.md        the hackathon / grant pitch
 kb/                knowledge base for humans and agents
+spikes/
+  kani-smoke/      feasibility spike + the SymbolicVM prototype
 stylus-samples/
   counter/         working Stylus contract; the smallest proof target
 ```

@@ -105,83 +105,161 @@ Ordered by how much they gate the plan.
   already spoken for by dependency pruning and solver convergence. Treat the
   schedule as fully committed, not as having slack.
 
-## Smoke test (2026-09-08) — ran, did not converge
+## Feasibility spike (2026-09-08) — resolved: `TestVM` is unusable, `SymbolicVM` works
 
-A minimal crate depending on `stylus-sdk 0.10.9 --features stylus-test`, with a
-`sol_storage!` counter and one `#[kani::proof] #[kani::unwind(4)]` harness
-asserting `set_number(n); number() == n` for a symbolic `n: u64`. Kept at
-[`spikes/kani-smoke/`](../spikes/kani-smoke/), so the result is reproducible.
+Spike crate: [`spikes/kani-smoke/`](../spikes/kani-smoke/). A `sol_storage!`
+counter plus staged harnesses that add one layer at a time, so the cost cliff
+can be located rather than guessed at.
 
-**Result: compiles and instruments cleanly; killed at a 25-minute timeout during
-CBMC symbolic execution, with no verification result.**
+### Result: `TestVM` cannot be verified by Kani at all
 
-That splits open question #1 into a clear yes and a clear no:
+| Harness | What it adds | Result |
+| --- | --- | --- |
+| `h0_empty` | nothing (baseline) | ✅ SUCCESSFUL, 131s — almost entirely compile time |
+| `h1_vm_only` | `TestVM::default()` | ❌ **FAILED in 2.4s of solver time**, 8 of 6707 checks failed, 6699 undetermined |
+| `h2_contract_only` | `Counter::from(&vm)` | ❌ timeout at 420s |
 
-- ✅ **The toolchain works.** `cargo kani` built `stylus-sdk` with
-  `--features stylus-test` through the Kani compiler, ran `goto-instrument`,
-  and entered symbolic execution. Nothing in the SDK is rejected outright, and
-  our `#[kani::unwind(4)]` bound was respected ("Not unwinding loop … iteration 4").
-- ❌ **A trivial harness does not converge in 25 minutes.** Solver cost, not
-  language support, is the binding constraint.
+The `h1` failure is the whole story:
 
-### Why it's slow — two concrete causes, both fixable
-
-**1. `stylus-core` compiles regexes at runtime.**
-`stylus-core-0.10.9/src/sol.rs` opens with:
-
-```rust
-lazy_static! {
-    static ref UINT_REGEX:  Regex = Regex::new(r"^uint(\d+)$").unwrap();
-    static ref INT_REGEX:   Regex = Regex::new(r"^int(\d+)$").unwrap();
-    static ref BYTES_REGEX: Regex = Regex::new(r"^bytes(\d+)$").unwrap();
-}
+```
+Failed Checks: call to foreign "C" function `syscall` is not currently
+supported by Kani.
+  File: libc-0.2.177/src/unix/linux_like/linux/mod.rs, line 6372,
+  in std::sys::random::linux::getrandom::getrandom
 ```
 
-So every Stylus contract transitively builds a regex engine to parse Solidity
-type names. Under Kani that engine is *symbolically executed*: the spike log is
-dominated by `aho-corasick` and SIMD `memchr`
-(`One::<__m128i>::count_raw`, `kani::models::intrinsics::simd_bitmask_impl::<i8, 16>`)
-being unwound over and over.
+`TestVM::default()` builds a `VMState`, which holds **nine `std::HashMap`s**
+(`storage: HashMap<U256, B256>`, `balances`, `code_storage`, four call-return
+maps, …). Every `HashMap::new()` constructs a `RandomState`, which seeds SipHash
+from OS randomness — a raw `getrandom` syscall. Kani cannot model foreign
+functions, so verification aborts and everything downstream goes undetermined.
+Kani additionally reported 13 foreign functions, ~90 atomics and a thread-local
+as present-and-unsupported.
 
-None of this is reachable from contract logic we care about.
-**`#[kani::stub]` these out, or stub `stylus_core::sol`'s callers, before
-anything else.** This is the single highest-leverage fix and should be the first
-thing tried when work resumes.
+**This is a hard incompatibility, not a performance problem.** No amount of
+stubbing, unwinding, or solver tuning makes `TestVM` verifiable, because the
+obstruction is in `std::HashMap`'s constructor.
 
-**2. `--features stylus-test` drags in a JSON-RPC stack.**
-The feature is defined as `stylus-test = ["dep:stylus-test", "dep:rclite", ...]`,
-and `stylus-test` depends on `alloy-provider`. Measured dependency footprint of
-the smoke crate: **268 crates**, including `tokio`, `reqwest`, `hyper`,
-`serde_json`. That is an absurd surface to hand a model checker.
+### Result: a purpose-built symbolic host works, and is fast
 
-The awkward part: the `Box<dyn Host>` form of `stylus_sdk::host::VM` — the
-injection seam this whole project depends on — exists *only* under
-`cfg(feature = "stylus-test")`. Today you cannot get host injection without also
-getting the RPC client.
+`spikes/kani-smoke/src/symbolic_vm.rs` implements `stylus_core::Host` directly:
+storage is a fixed `MAX_SLOTS`-entry array with a linear scan, transaction
+context is drawn once at construction, and unmodelled operations
+(`create1`, `call_contract`, …) are `unimplemented!()` so that a proof touching
+them fails loudly instead of silently.
 
-**This is the real architectural problem, and it is a better story than the one
-in the proposal.** Options, best first:
+| Harness | What it proves | Checks | Time |
+| --- | --- | --- | --- |
+| `s1_contract_only` | contract binds to host | 348 | ✅ 6s |
+| `s2_read_only` | one symbolic storage read | 538 | ✅ 8s |
+| `s3_starts_at_zero` | fresh contract reads zero | 539 | ✅ 8s |
+| `s4_set_then_get` | storage round-trips for all `n: u64` | 1044 | ✅ 14s |
+| `s5_add_no_overflow` | `add_number` exact for `u64`-widened operands | 1044 | ✅ 20s |
+| `s6_symbolic_ctx` | same, with fully symbolic sender/value/block | 1047 | ✅ 26s |
 
-1. **Upstream a feature split** in `stylus-sdk`: a `mock-host` (or `dyn-host`)
-   feature that enables the `Box<dyn Host>` VM and `stylus-proc/stylus-test`
-   codegen *without* `dep:stylus-test`. Small, obviously-correct PR; makes
-   `stylus-sdk` verification-friendly for everyone; and "we contributed the hook
-   upstream" is a genuinely strong line in a grant application.
-2. Patch locally via `[patch.crates-io]` against a vendored `stylus-sdk` while
-   the upstream PR is in flight, so the hackathon isn't blocked on review.
-3. Bypass `VM` entirely — have harnesses construct storage types against a
-   `SymbolicVM` directly, if `stylus-proc`'s generated code permits it. Needs
-   checking against `stylus-proc` source.
+The direct comparisons are stark:
 
-### Revised read on the plan
+| | `TestVM` | `SymbolicVM` |
+| --- | --- | --- |
+| bind contract to host | timeout at 420s | **6s** |
+| symbolic set-then-get | timeout at 25 min | **14s** |
 
-Feasibility is **not** established yet, and the schedule risk has moved. The
-proposal budgets Hours 00–24 for FFI stubbing that turns out to be unnecessary;
-that time is now clearly needed for dependency pruning and solver convergence
-instead. Net timeline is probably unchanged, but the work is different work.
+Full symbolic transaction context (`s6`) costs 26s against 14s for a concrete
+one — cheap enough that symbolic context can be the default.
 
-Recommended next spike, in order:
-1. Re-run the smoke harness with `regex`/`memchr` paths stubbed. If it converges
-   in minutes, the project is on.
-2. Prototype the `mock-host` feature split locally and measure the crate count.
-3. Only then move to `U256` and keccak-backed mappings (open questions #3, #4).
+This works because `stylus-proc` generates
+
+```rust
+impl<H: stylus_core::Host + Clone + 'static> From<&H> for Counter
+```
+
+— generic over *any* `Host`. `TestVM` is not privileged; it is merely the one
+implementation that ships. The `stylus-test` **feature** is still required
+(it is what makes that impl exist at all, and what makes `VM` hold a
+`Box<dyn Host>`), but the `stylus-test` **crate**'s code never has to be
+reachable.
+
+### What this changes
+
+1. **`kani-stylus-core` is not optional.** The proposal framed a symbolic host
+   as a nice-to-have over existing mocking. It is the only way to run Kani on a
+   Stylus contract at all. That is a *stronger* pitch than the original FFI
+   story and it is defensible against a reviewer who knows the SDK — the SDK's
+   own mock host provably does not verify.
+2. **The 268-crate dependency concern drops in priority.** `tokio`, `reqwest`
+   and `hyper` cost compile time but never enter the goto program as long as
+   nothing constructs a `TestVM`. An upstream `mock-host` feature split is still
+   worth proposing (it would cut build times and make the intent explicit) but
+   it is no longer on the critical path.
+3. **Avoid `std` collections everywhere in the verification path.** Any
+   `HashMap`/`HashSet` reachable from a harness reintroduces `getrandom`. Use
+   fixed arrays, `BTreeMap`, or a `HashMap` with a deterministic hasher.
+
+### Finding: Kani does NOT catch `U256` overflow for free
+
+The proposal lists "arithmetic overflow absence" as something Kani checks
+automatically. **For Stylus contracts this is false**, and the reason matters.
+
+`alloy`'s `U256` is `ruint::Uint<256, 4>`, and `ruint/src/add.rs` ends with:
+
+```rust
+impl_bin_op!(Add, add, AddAssign, add_assign, wrapping_add);
+impl_bin_op!(Sub, sub, SubAssign, sub_assign, wrapping_sub);
+```
+
+So `a + b` on `U256` **is** `wrapping_add`. It never panics. Internally it
+combines limbs with `carrying_add` on `u64`, which is explicitly wrapping, so
+Kani's built-in overflow checks — which only fire on primitive integer
+operations — see nothing to complain about either.
+
+Measured: a harness applying `add_number` to two fully symbolic `U256` values
+reports `0 of 1043 failed`. There is no panic to find.
+
+Consequences:
+
+- **The stock Stylus counter template silently wraps.** `add_number` and
+  `mul_number` in `stylus-samples/counter` have no overflow protection.
+  Solidity >= 0.8 would revert here; Rust on Stylus does not.
+- Every Stylus contract doing token arithmetic with bare `+`/`-`/`*` on `U256`
+  has the same exposure, and neither `cargo test` nor a naive `cargo kani` run
+  will surface it.
+- **This raises the project's value.** kani-stylus is not just a plumbing layer
+  that makes Kani runnable; it has to ship the arithmetic properties Kani cannot
+  infer. "Prove your token math doesn't wrap" is a concrete, demonstrable pitch
+  with a real counterexample behind it.
+
+Practically, proof obligations should take the shape of `d3` in the spike:
+`kani::assume(a.checked_add(b).is_some())` for the intended-behaviour proof,
+plus a separate harness showing the unguarded version wraps.
+
+### Result: defect detection works
+
+The other half of feasibility — a verifier that cannot fail is worthless.
+
+| Harness | Intent | Result |
+| --- | --- | --- |
+| `d1_add_number_can_decrease_the_counter` | must FAIL: adding can decrease the counter | ✅ 1 of 1110 checks failed, panic found as expected, 26s |
+| `d2_add_number_is_exactly_wrapping` | pins the semantics: result `== a.wrapping_add(b)` | ✅ 25s |
+| `d3_add_number_exact_when_no_overflow` | control: exact once overflow is assumed away | ✅ 34s |
+
+`d1` is a genuine bug in the stock `cargo stylus new` template, found
+automatically over the full 2^256 input space. `d2` proves it is precisely a
+wrap rather than some other fault, and `d3` shows the guarded version is exact —
+together they make the demo airtight rather than a single red line.
+
+`--concrete-playback` needs the unstable flag: `cargo kani -Z concrete-playback
+--concrete-playback=print`.
+
+### Superseded: the regex hypothesis
+
+An earlier reading of this file blamed the `lazy_static` `Regex`es in
+`stylus-core/src/sol.rs` for the slowdown. **That was wrong.** Their only
+consumer, `is_sol_keyword`, is called from just two places:
+`stylus-sdk/src/abi/export/mod.rs` (behind the `export-abi` feature, which we do
+not enable) and a `stylus-proc` derive macro (compile-time only). Neither is
+reachable from a proof harness. The SIMD noise in the first spike log was
+hashbrown's SSE2 group probing (`simd_bitmask_impl::<i8, 16>` is a 16-lane
+`_mm_movemask_epi8`), i.e. `HashMap` again — not `memchr` via `regex`.
+
+Kept here as a caution: the first log looked like a regex problem and was not.
+Locate cost cliffs with staged harnesses, not by reading dependency trees.

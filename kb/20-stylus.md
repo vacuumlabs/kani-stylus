@@ -104,18 +104,29 @@ The doc comment on `Host` states the intent outright:
 `SymbolicVM` that returns `kani::any()` from these methods drops straight in
 where `TestVM` goes.
 
-Two caveats, both measured on 2026-09-08 — see [50-feasibility.md](50-feasibility.md):
+Crucially, the generated `From` impl is **generic over any host**
+(`stylus-proc-0.10.9/src/macros/storage.rs`):
 
-- `Box<dyn Host>` means **dynamic dispatch on every host call**. Kani handles
-  trait objects, but virtual dispatch widens the SMT encoding.
-- Worse, enabling `stylus-test` to *get* that `Box<dyn Host>` also pulls in the
-  `stylus-test` crate, which depends on `alloy-provider` — **268 crates total,
-  including tokio, reqwest and hyper**. Getting the injection seam without the
-  JSON-RPC stack probably needs an upstream feature split in `stylus-sdk`.
+```rust
+impl<H: stylus_sdk::stylus_core::Host + Clone + 'static> From<&H> for Counter {
+    fn from(host: &H) -> Self { /* ... Box::new(host.clone()) ... */ }
+}
+```
 
-Also note `stylus-core/src/sol.rs` compiles three `Regex`es via `lazy_static` at
-runtime to parse Solidity type names. Harmless on-chain, ruinous under a model
-checker: the regex engine gets symbolically executed. Stub it.
+So `TestVM` is not privileged — it is just the implementation that ships. Our own
+`SymbolicVM` drops in unchanged. The `stylus-test` *feature* is still needed
+(it is what makes this impl exist and makes `VM` hold a `Box<dyn Host>`), but the
+`stylus-test` *crate*'s code need never be reachable.
+
+Notes measured on 2026-09-08 — see [50-feasibility.md](50-feasibility.md):
+
+- Enabling `stylus-test` pulls in `alloy-provider` and friends — **268 crates**,
+  including tokio, reqwest and hyper. This costs *compile* time only; none of it
+  enters the goto program unless something constructs a `TestVM`. An upstream
+  `mock-host` feature split would be a welcome cleanup but is not a blocker.
+- `Box<dyn Host>` means dynamic dispatch on every host call. Measured cost so far
+  is acceptable (a symbolic set/get proof runs in 14s), so this has not needed
+  attention.
 
 ## Storage model
 
@@ -142,7 +153,12 @@ Two consequences for a symbolic model:
 in-memory host with setters like `vm.set_value(...)`, `vm.set_sender(...)`.
 `stylus-samples/counter/src/lib.rs` already uses it.
 
-`TestVM` is the closest prior art to what we're building and the best reference
-implementation to read. The difference is exactly one of concreteness:
-`TestVM` returns fixed values; `SymbolicVM` returns `kani::any()` constrained by
-`kani::assume`.
+`TestVM` is the closest prior art and a useful reference for *what* each host
+method should return — but it **cannot be used under Kani**. Its `VMState` holds
+nine `std::HashMap`s, and `HashMap::new()` seeds SipHash via a `getrandom`
+syscall, which Kani cannot model; verification aborts outright. See
+[50-feasibility.md](50-feasibility.md) for the measurement.
+
+So `SymbolicVM` differs from `TestVM` on two axes, not one: it returns
+`kani::any()` instead of fixed values, *and* it must avoid `std` hash collections
+entirely (fixed-size arrays, `BTreeMap`, or a deterministic hasher).

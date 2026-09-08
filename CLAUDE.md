@@ -29,3 +29,21 @@ from it.
   2026-09-08") so staleness is visible.
 - Kani runs take minutes. Use `cargo kani --harness <name>` while iterating, and
   run long verifications in the background.
+
+## Verification rules learned the hard way
+
+These are measured, not guessed — see [kb/50-feasibility.md](kb/50-feasibility.md).
+
+- **Never let `std::HashMap`/`HashSet` be reachable from a proof harness.**
+  `RandomState::new()` seeds SipHash via a `getrandom` syscall, which Kani
+  cannot model; the whole harness aborts. This is why `TestVM` is unusable and
+  why `SymbolicVM` uses fixed-size arrays. Use arrays, `BTreeMap`, or a
+  deterministic hasher.
+- **`U256` arithmetic does not trap.** `alloy`/`ruint` define `+`/`-` as
+  `wrapping_add`/`wrapping_sub`, and Kani's automatic overflow checks only cover
+  primitive integers. Overflow must be asserted explicitly — never assume a
+  passing proof rules it out.
+- **Locate cost cliffs with staged harnesses**, adding one layer at a time.
+  Reading dependency trees to guess at the bottleneck produced two wrong
+  diagnoses before a five-harness ladder found the real one in minutes.
+- Prefer `--output-format terse`; the default buries results in warnings.
