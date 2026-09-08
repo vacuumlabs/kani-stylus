@@ -13,3 +13,6 @@ kani_output/
 .DS_Store
 *.swp
 .idea/
+
+# Workspace build artifacts
+/Cargo.lock.bak

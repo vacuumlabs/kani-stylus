@@ -146,6 +146,33 @@ Two consequences for a symbolic model:
   Start with a small association list (say 8–16 slots) of
   `(key, value)` pairs, unwritten keys reading as a fresh `kani::any()` or zero.
 
+## Mappings hash outside the `Host` trait
+
+A trap worth knowing, verified 2026-09-08. `stylus-sdk/src/storage/map.rs`
+computes mapping slots with:
+
+```rust
+crypto::keccak(data).into()
+```
+
+and `stylus-sdk/src/crypto.rs` is simply:
+
+```rust
+pub fn keccak<T: AsRef<[u8]>>(bytes: T) -> B256 {
+    alloy_primitives::keccak256(bytes)
+}
+```
+
+So mapping slot derivation **bypasses `CryptographyAccess::native_keccak256`
+entirely**. Implementing that trait method is not enough to control hashing —
+a host-level oracle will simply never be called, and real keccak256 reaches the
+solver, which it cannot survive.
+
+The way in is `#[kani::stub(stylus_sdk::crypto::keccak, ...)]` plus
+`cargo kani -Z stubbing`. Kani's stubbing supports generic functions provided
+arity and generic-parameter count match, which `keccak<T: AsRef<[u8]>>` does.
+See [`crates/kani-stylus-core/src/keccak.rs`](../crates/kani-stylus-core/src/keccak.rs).
+
 ## Testing today: `TestVM`
 
 `stylus-sdk` with `--features stylus-test` pulls in the `stylus-test` crate

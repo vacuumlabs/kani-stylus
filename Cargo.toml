@@ -1,0 +1,15 @@
+# Verification workspace.
+#
+# `stylus-samples/counter` is deliberately NOT a member: it pins its own
+# toolchain for the wasm32 target, which would fight `cargo kani`. It stays a
+# standalone crate for build/deploy work.
+[workspace]
+resolver = "2"
+members = [
+    "crates/kani-stylus-core",
+    "examples/proofs",
+]
+exclude = [
+    "stylus-samples/counter",
+    "spikes/kani-smoke",
+]

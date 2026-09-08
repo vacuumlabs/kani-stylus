@@ -1,0 +1,15 @@
+[package]
+name = "kani-stylus-core"
+version = "0.1.0"
+edition = "2021"
+description = "Symbolic ArbOS host for formally verifying Arbitrum Stylus contracts with Kani"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/vacuumlabs/kani-stylus"
+keywords = ["arbitrum", "stylus", "kani", "verification", "model-checking"]
+categories = ["development-tools::testing", "cryptography::cryptocurrencies"]
+
+[dependencies]
+alloy-primitives = { version = "1.5.7", default-features = false }
+# `stylus-test` is what makes the generic `From<&H>` impl exist and makes `VM`
+# hold a `Box<dyn Host>`. We never construct a `TestVM` — it cannot be verified.
+stylus-sdk = { version = "0.10.9", default-features = false, features = ["stylus-test"] }

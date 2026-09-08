@@ -22,35 +22,34 @@ alongside it — the proposal's central technical premise needs revising.
 
 ```
 kani-stylus/
+├── Cargo.toml           workspace over crates/ and examples/
 ├── README.md            getting started (links out to upstream docs)
 ├── proposal.md          the hackathon/grant pitch
 ├── kb/                  this knowledge base
+├── crates/
+│   └── kani-stylus-core/  the library: SymbolicVM, slot store, keccak oracle
+├── examples/
+│   └── proofs/          worked examples — counter and vault, fully verified
 ├── spikes/
-│   └── kani-smoke/      minimal "does Kani verify a Stylus contract?" probe
+│   └── kani-smoke/      the original feasibility probe (kept for the record)
 └── stylus-samples/
     └── counter/         working Stylus contract, built with `cargo stylus new`
 ```
 
+`stylus-samples/counter` and `spikes/kani-smoke` are deliberately **excluded**
+from the workspace: the former pins its own toolchain for the wasm32 target,
+which would fight `cargo kani`.
+
 ### Where new code should go
 
-Not yet created — decide before writing the first crate. The shape the proposal
-implies, adapted to what the SDK actually offers (see [50-feasibility.md](50-feasibility.md)):
+The library lives in `crates/kani-stylus-core`. It is a single crate rather than
+the `-core` plus macro split the proposal imagined — there turned out to be
+nothing for a proc macro to do, since `#[kani::proof]` already exists and
+`SymbolicVM` is an ordinary value. Add a macro crate only if a real ergonomic
+need shows up.
 
-```
-kani-stylus/
-├── Cargo.toml                    [workspace] over the crates below
-├── crates/
-│   ├── kani-stylus-core/         SymbolicVM: an impl of stylus_core::Host
-│   │                             backed by kani::any() + a bounded slot map
-│   └── kani-stylus/              proof macros / harness ergonomics
-│                                 (fold into -core if it stays thin)
-└── stylus-samples/
-    ├── counter/                  existing; smallest possible proof target
-    └── erc20/                    the MVP proof target
-```
-
-Making the root a Cargo workspace means `cargo kani` at the root can sweep every
-harness in one run, which is deliverable #4 above.
+Worked examples go in `examples/proofs`. That crate is the main usability
+deliverable: it is what a newcomer reads to learn the tool.
 
 ### On vendoring the Kani repo
 
@@ -74,11 +73,27 @@ git clone --depth 1 https://github.com/model-checking/kani vendor/kani  # vendor
       at all — `std::HashMap`'s `RandomState` needs a `getrandom` syscall. A
       purpose-built symbolic host works and is fast: symbolic set-then-get goes
       from a 25-minute timeout to **14s**. See [50-feasibility.md](50-feasibility.md).
-- [x] `SymbolicVM` prototype implementing the full `stylus_core::Host` trait —
-      [`spikes/kani-smoke/src/symbolic_vm.rs`](../spikes/kani-smoke/src/symbolic_vm.rs)
-- [ ] Promote `SymbolicVM` into a real `kani-stylus-core` crate (workspace,
-      configurable `MAX_SLOTS`, builder for the symbolic context)
-- [ ] Keccak256 as an uninterpreted injective function — **blocks all mapping
-      proofs**, so it blocks ERC-20. Highest-value next piece of work.
-- [ ] ERC-20 proof harnesses (balance conservation, access control)
-- [ ] Injected-defect counterexample demo
+- [x] **`kani-stylus-core` crate** — `SymbolicVM` implementing the full
+      `stylus_core::Host` trait, a bounded slot store, and the keccak oracle.
+      Workspace at the repo root.
+- [x] **Keccak256 as an uninterpreted injective function**
+      ([`keccak.rs`](../crates/kani-stylus-core/src/keccak.rs)). Note it must be
+      wired in with `#[kani::stub]`: Stylus mappings call
+      `stylus_sdk::crypto::keccak` directly, *not* through the `Host` trait, so
+      implementing `native_keccak256` alone is not enough.
+- [x] **Worked examples** in [`examples/proofs`](../examples/proofs) — a
+      verified counter (with the real overflow bug and its counterexample) and a
+      vault covering access control and mappings.
+- [ ] Sharpen the usability story: a short "write your first proof" walkthrough,
+      and a single command that runs the whole suite.
+- [ ] A more substantial verification target. ERC-20 is a plausible stepping
+      stone but is **not** settled — the interesting goal is something closer to
+      a real DeFi contract. Decide once the basics are solid.
+
+### Deliberately not doing
+
+- **No upstream contributions.** An SDK feature split (`mock-host`, giving the
+  `Box<dyn Host>` VM without pulling in `stylus-test`'s RPC stack) would be a
+  clean improvement and is documented in
+  [50-feasibility.md](50-feasibility.md) — but it stays a documented option, not
+  a task. Everything works without it; the cost is compile time only.

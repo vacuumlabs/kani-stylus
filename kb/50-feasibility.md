@@ -188,9 +188,12 @@ reachable.
    own mock host provably does not verify.
 2. **The 268-crate dependency concern drops in priority.** `tokio`, `reqwest`
    and `hyper` cost compile time but never enter the goto program as long as
-   nothing constructs a `TestVM`. An upstream `mock-host` feature split is still
-   worth proposing (it would cut build times and make the intent explicit) but
-   it is no longer on the critical path.
+   nothing constructs a `TestVM`.
+
+   An upstream `mock-host` feature split — giving the `Box<dyn Host>` VM
+   without `dep:stylus-test` — would cut build times and make the intent
+   explicit. **This is a documented option only; we are not contributing it
+   upstream.** Everything works without it, and the cost is compile time.
 3. **Avoid `std` collections everywhere in the verification path.** Any
    `HashMap`/`HashSet` reachable from a harness reintroduces `getrandom`. Use
    fixed arrays, `BTreeMap`, or a `HashMap` with a deterministic hasher.

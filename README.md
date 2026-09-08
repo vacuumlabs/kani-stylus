@@ -10,12 +10,14 @@ together: give a Stylus contract a symbolic host environment, then prove things
 like "transfers conserve total supply" and "only the owner can call this"
 instead of testing them one input at a time.
 
-**Status: feasibility confirmed, no library yet.** A working spike proves a
-Stylus contract can be verified by Kani in seconds, and that the approach finds
-real bugs — including a silent `U256` overflow in the stock `cargo stylus new`
-template. See [`spikes/kani-smoke/`](spikes/kani-smoke/) to run it, and
-[`kb/50-feasibility.md`](kb/50-feasibility.md) for the measurements.
-[`proposal.md`](proposal.md) is the original pitch; parts of it are superseded.
+**Status: working.** [`crates/kani-stylus-core`](crates/kani-stylus-core/) gives
+your contract a symbolic ArbOS host; [`examples/proofs`](examples/proofs/) shows
+it verifying a counter and a vault, including mappings and owner-gated methods.
+It finds real bugs — the stock `cargo stylus new` template has a silent `U256`
+overflow, and Kani produces the exact witness.
+
+[`proposal.md`](proposal.md) is the original pitch; parts of it are superseded
+by what the code turned out to need — see [`kb/50-feasibility.md`](kb/50-feasibility.md).
 
 ## Getting started
 
@@ -47,7 +49,45 @@ cargo build --target wasm32-unknown-unknown --release # build the wasm
 cargo stylus check                                    # would it activate on-chain?
 ```
 
-### 3. Learn the two halves
+### 3. Run the proofs
+
+```bash
+./verify.sh                                        # the whole suite
+./verify.sh set_then_get_roundtrips                # one harness
+./verify.sh --playback add_number_can_decrease_the_counter
+```
+
+The first run compiles the dependency tree through the Kani compiler and takes a
+few minutes; after that individual harnesses are seconds.
+
+The one to look at first is
+`counter::proofs::add_number_can_decrease_the_counter` in
+[`examples/proofs/src/counter.rs`](examples/proofs/src/counter.rs). It proves
+that the stock Stylus counter template can be made to *shrink* by adding to it,
+because `alloy`'s `U256 + U256` is `wrapping_add` and never panics. `--playback`
+turns that into a runnable test with the exact values.
+
+Writing your own: see the [crate README](crates/kani-stylus-core/README.md).
+The shape is
+
+```rust
+#[cfg(kani)]
+mod proofs {
+    use kani_stylus_core::{any_u256, SymbolicVM};
+    use super::*;
+
+    #[kani::proof]
+    fn my_invariant() {
+        let vm = SymbolicVM::concrete_ctx();
+        let mut c = MyContract::from(&vm);
+        let x = any_u256();
+        kani::assume(/* precondition */ true);
+        // ... call methods, then assert the property
+    }
+}
+```
+
+### 4. Learn the two halves
 
 **Stylus** — start with the [gentle introduction](https://docs.arbitrum.io/stylus/gentle-introduction)
 and the [quickstart](https://docs.arbitrum.io/stylus/quickstart). Then the parts
@@ -66,7 +106,7 @@ and [what Kani doesn't catch](https://model-checking.github.io/kani/undefined-be
 
 A fuller, categorised link list is in [`kb/10-links.md`](kb/10-links.md).
 
-### 4. Read the knowledge base
+### 5. Read the knowledge base
 
 [`kb/`](kb/) holds the project's shared context — architecture notes taken from
 reading the SDK source, Kani's limits, and the open feasibility questions.
@@ -87,12 +127,17 @@ See [`kb/20-stylus.md`](kb/20-stylus.md) and [`kb/50-feasibility.md`](kb/50-feas
 ## Layout
 
 ```
+verify.sh          run the proof suite
 proposal.md        the hackathon / grant pitch
 kb/                knowledge base for humans and agents
+crates/
+  kani-stylus-core/  the library: SymbolicVM, slot store, keccak oracle
+examples/
+  proofs/          worked examples — counter and vault, fully verified
 spikes/
-  kani-smoke/      feasibility spike + the SymbolicVM prototype
+  kani-smoke/      the original feasibility probe, kept for the record
 stylus-samples/
-  counter/         working Stylus contract; the smallest proof target
+  counter/         deployable Stylus contract from `cargo stylus new`
 ```
 
 ## License

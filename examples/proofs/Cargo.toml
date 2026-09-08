@@ -1,0 +1,12 @@
+[package]
+name = "proofs"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+alloy-primitives = { version = "1.5.7", default-features = false }
+# `stylus-test` makes the generic `From<&H>` impl exist and makes `VM` hold a
+# `Box<dyn Host>`. It does NOT mean we use `TestVM` — that cannot be verified.
+stylus-sdk = { version = "0.10.9", default-features = false, features = ["stylus-test"] }
+kani-stylus-core = { path = "../../crates/kani-stylus-core" }
