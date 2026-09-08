@@ -60,13 +60,18 @@ use.** The proposal's framing may be accurate for pre-0.8 SDKs, where
 
 Ordered by how much they gate the plan.
 
-1. **Does `cargo kani` complete a build against `stylus-sdk --features
-   stylus-test`?** — *Spike run 2026-09-08; see "Smoke test" below.* The SDK
-   pulls in `alloy-primitives`, `ruint`, `keccak`, `rclite`; any of them could
-   contain something Kani rejects.
+1. ~~**Does `cargo kani` complete a build against `stylus-sdk --features
+   stylus-test`?**~~ — **Answered 2026-09-08: yes, it builds and instruments;
+   but a trivial harness does not converge in 25 minutes.** See
+   "Smoke test" below. This is now the project's gating risk, restated as:
+   **can the dependency surface be pruned enough for proofs to converge?**
+   Two concrete causes identified (runtime regex in `stylus-core`; a 268-crate
+   tree including tokio/reqwest under `--features stylus-test`), both with
+   plausible fixes.
 2. **Does dynamic dispatch through `Box<dyn Host>` blow up the encoding?**
    Every host call goes through a trait object under `stylus-test`. If proofs
-   don't converge, monomorphising past the box is the first lever.
+   don't converge, monomorphising past the box is the first lever. Not yet
+   isolated — the regex noise in the spike swamps any signal about dispatch.
 3. **How do we model keccak256?** Needed for storage mappings (ERC-20 balances)
    and unavoidable for the flagship proof. Real keccak is intractable for an SMT
    solver. Plan: uninterpreted injective function. Needs prototyping, and the
@@ -96,20 +101,87 @@ Ordered by how much they gate the plan.
   pre-agreed fallback (narrower integer widths, smaller storage bound, minimal
   ERC-20 instead of OZ).
 - The 48–72h schedule is plausible *given* the trait-impl finding above, which
-  frees roughly the first 24 hours. Spend the freed time on solver convergence,
-  not on scope.
+  frees roughly the first 24 hours — but the smoke test says that freed time is
+  already spoken for by dependency pruning and solver convergence. Treat the
+  schedule as fully committed, not as having slack.
 
-## Smoke test (2026-09-08)
+## Smoke test (2026-09-08) — ran, did not converge
 
 A minimal crate depending on `stylus-sdk 0.10.9 --features stylus-test`, with a
-`sol_storage!` counter and one `#[kani::proof]` harness asserting
-`set_number(n); number() == n` for symbolic `n`.
+`sol_storage!` counter and one `#[kani::proof] #[kani::unwind(4)]` harness
+asserting `set_number(n); number() == n` for a symbolic `n: u64`. Kept at
+[`spikes/kani-smoke/`](../spikes/kani-smoke/), so the result is reproducible.
 
-Kept at
-`$SCRATCH/smoke/` during the spike; fold it into `stylus-samples/` once it's
-known-good.
+**Result: compiles and instruments cleanly; killed at a 25-minute timeout during
+CBMC symbolic execution, with no verification result.**
 
-**Result: _pending — first run in progress; the crate compiled through the Kani
-compiler and reached `goto-instrument`, so the SDK builds under Kani._** Record
-the outcome here, and if it passes, promote the harness into the repo as the
-first regression test.
+That splits open question #1 into a clear yes and a clear no:
+
+- ✅ **The toolchain works.** `cargo kani` built `stylus-sdk` with
+  `--features stylus-test` through the Kani compiler, ran `goto-instrument`,
+  and entered symbolic execution. Nothing in the SDK is rejected outright, and
+  our `#[kani::unwind(4)]` bound was respected ("Not unwinding loop … iteration 4").
+- ❌ **A trivial harness does not converge in 25 minutes.** Solver cost, not
+  language support, is the binding constraint.
+
+### Why it's slow — two concrete causes, both fixable
+
+**1. `stylus-core` compiles regexes at runtime.**
+`stylus-core-0.10.9/src/sol.rs` opens with:
+
+```rust
+lazy_static! {
+    static ref UINT_REGEX:  Regex = Regex::new(r"^uint(\d+)$").unwrap();
+    static ref INT_REGEX:   Regex = Regex::new(r"^int(\d+)$").unwrap();
+    static ref BYTES_REGEX: Regex = Regex::new(r"^bytes(\d+)$").unwrap();
+}
+```
+
+So every Stylus contract transitively builds a regex engine to parse Solidity
+type names. Under Kani that engine is *symbolically executed*: the spike log is
+dominated by `aho-corasick` and SIMD `memchr`
+(`One::<__m128i>::count_raw`, `kani::models::intrinsics::simd_bitmask_impl::<i8, 16>`)
+being unwound over and over.
+
+None of this is reachable from contract logic we care about.
+**`#[kani::stub]` these out, or stub `stylus_core::sol`'s callers, before
+anything else.** This is the single highest-leverage fix and should be the first
+thing tried when work resumes.
+
+**2. `--features stylus-test` drags in a JSON-RPC stack.**
+The feature is defined as `stylus-test = ["dep:stylus-test", "dep:rclite", ...]`,
+and `stylus-test` depends on `alloy-provider`. Measured dependency footprint of
+the smoke crate: **268 crates**, including `tokio`, `reqwest`, `hyper`,
+`serde_json`. That is an absurd surface to hand a model checker.
+
+The awkward part: the `Box<dyn Host>` form of `stylus_sdk::host::VM` — the
+injection seam this whole project depends on — exists *only* under
+`cfg(feature = "stylus-test")`. Today you cannot get host injection without also
+getting the RPC client.
+
+**This is the real architectural problem, and it is a better story than the one
+in the proposal.** Options, best first:
+
+1. **Upstream a feature split** in `stylus-sdk`: a `mock-host` (or `dyn-host`)
+   feature that enables the `Box<dyn Host>` VM and `stylus-proc/stylus-test`
+   codegen *without* `dep:stylus-test`. Small, obviously-correct PR; makes
+   `stylus-sdk` verification-friendly for everyone; and "we contributed the hook
+   upstream" is a genuinely strong line in a grant application.
+2. Patch locally via `[patch.crates-io]` against a vendored `stylus-sdk` while
+   the upstream PR is in flight, so the hackathon isn't blocked on review.
+3. Bypass `VM` entirely — have harnesses construct storage types against a
+   `SymbolicVM` directly, if `stylus-proc`'s generated code permits it. Needs
+   checking against `stylus-proc` source.
+
+### Revised read on the plan
+
+Feasibility is **not** established yet, and the schedule risk has moved. The
+proposal budgets Hours 00–24 for FFI stubbing that turns out to be unnecessary;
+that time is now clearly needed for dependency pruning and solver convergence
+instead. Net timeline is probably unchanged, but the work is different work.
+
+Recommended next spike, in order:
+1. Re-run the smoke harness with `regex`/`memchr` paths stubbed. If it converges
+   in minutes, the project is on.
+2. Prototype the `mock-host` feature split locally and measure the crate count.
+3. Only then move to `U256` and keccak-backed mappings (open questions #3, #4).

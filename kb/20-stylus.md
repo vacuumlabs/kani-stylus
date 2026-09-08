@@ -104,10 +104,18 @@ The doc comment on `Host` states the intent outright:
 `SymbolicVM` that returns `kani::any()` from these methods drops straight in
 where `TestVM` goes.
 
-Caveat worth measuring: `Box<dyn Host>` means **dynamic dispatch on every host
-call**. Kani handles trait objects, but virtual dispatch tends to widen the SMT
-encoding. If proofs blow up, monomorphising past the `Box<dyn Host>` is the
-first thing to try.
+Two caveats, both measured on 2026-09-08 — see [50-feasibility.md](50-feasibility.md):
+
+- `Box<dyn Host>` means **dynamic dispatch on every host call**. Kani handles
+  trait objects, but virtual dispatch widens the SMT encoding.
+- Worse, enabling `stylus-test` to *get* that `Box<dyn Host>` also pulls in the
+  `stylus-test` crate, which depends on `alloy-provider` — **268 crates total,
+  including tokio, reqwest and hyper**. Getting the injection seam without the
+  JSON-RPC stack probably needs an upstream feature split in `stylus-sdk`.
+
+Also note `stylus-core/src/sol.rs` compiles three `Regex`es via `lazy_static` at
+runtime to parse Solidity type names. Harmless on-chain, ruinous under a model
+checker: the regex engine gets symbolically executed. Stub it.
 
 ## Storage model
 

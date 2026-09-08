@@ -25,6 +25,8 @@ kani-stylus/
 ├── README.md            getting started (links out to upstream docs)
 ├── proposal.md          the hackathon/grant pitch
 ├── kb/                  this knowledge base
+├── spikes/
+│   └── kani-smoke/      minimal "does Kani verify a Stylus contract?" probe
 └── stylus-samples/
     └── counter/         working Stylus contract, built with `cargo stylus new`
 ```
@@ -68,8 +70,13 @@ git clone --depth 1 https://github.com/model-checking/kani vendor/kani  # vendor
 
 - [x] Stylus counter contract builds and has passing unit tests
 - [x] Kani 0.67.0 and cargo-stylus 0.10.9 installed locally
-- [ ] Feasibility spike: does `cargo kani` get through a `stylus-test` build at all?
-      (see [50-feasibility.md](50-feasibility.md) — this gates everything else)
+- [x] Feasibility spike: `cargo kani` builds and instruments a Stylus contract
+      under `--features stylus-test` — but a trivial harness did not converge in
+      25 min. Two causes found (runtime regex in `stylus-core`; 268-crate tree
+      incl. tokio/reqwest). See [50-feasibility.md](50-feasibility.md).
+- [ ] **Convergence spike (now the gating risk):** stub out the regex/memchr
+      paths and re-run; then prototype a `mock-host` feature split that avoids
+      pulling in `stylus-test`'s RPC stack
 - [ ] `kani-stylus-core` symbolic host
 - [ ] ERC-20 proof harnesses
 - [ ] Injected-defect counterexample demo
