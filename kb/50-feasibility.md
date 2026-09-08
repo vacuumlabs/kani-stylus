@@ -28,7 +28,7 @@ behind a safe Rust trait — see [20-stylus.md](20-stylus.md) for the full layer
 - `stylus_sdk::host::VM` holds a `Box<dyn Host>` in that configuration, and
   contracts are built as `Contract::from(&vm)`. Injection is already supported.
 - `stylus_sdk::testing::TestVM` is a working concrete implementation of exactly
-  this shape, already used in `stylus-samples/counter/src/lib.rs`.
+  this shape, already used in `examples/counter/src/lib.rs`.
 
 ### What this means
 
@@ -221,7 +221,7 @@ reports `0 of 1043 failed`. There is no panic to find.
 Consequences:
 
 - **The stock Stylus counter template silently wraps.** `add_number` and
-  `mul_number` in `stylus-samples/counter` have no overflow protection.
+  `mul_number` in `examples/counter` have no overflow protection.
   Solidity >= 0.8 would revert here; Rust on Stylus does not.
 - Every Stylus contract doing token arithmetic with bare `+`/`-`/`*` on `U256`
   has the same exposure, and neither `cargo test` nor a naive `cargo kani` run
@@ -275,7 +275,7 @@ a test you can paste into the repo, all from one 26-second command.
 
 The point of the tool is that a Stylus developer adds it to the project they
 already have. Verified 2026-09-08 on
-[`stylus-samples/counter`](../stylus-samples/counter) — the stock template, with
+[`examples/counter`](../examples/counter) — the stock template, with
 proofs added to `src/lib.rs` beside its existing `#[cfg(test)]` module and three
 lines of `Cargo.toml`. No restructuring, no separate crate.
 
@@ -297,7 +297,7 @@ lines of `Cargo.toml`. No restructuring, no separate crate.
 | --- | --- |
 | `cargo test` | passes — the template's own `test_counter` |
 | `cargo build --target wasm32-unknown-unknown --release` | 18.5 KB cdylib; `strings` shows no `kani` symbols and no `stylus-test` panic stub, and the real `vm_hooks` imports are intact |
-| `cargo stylus check` | passes — 6.0 KB, would activate on chain |
+| `cargo stylus check` | compiles and sizes the contract at 6.0 KB. Its activation step needs a Stylus RPC (defaults to `localhost:8547`); against a devnode it reported a wasm data fee of 0.000071 ETH, and offline it stops after the size report |
 | `cargo kani --features proofs` | the 7 harnesses above |
 
 See [20-stylus.md](20-stylus.md#packaging-how-verification-attaches-to-a-real-contract)
@@ -311,7 +311,7 @@ code rather than a convenient subset.
 
 ### Finding: mappings are viable but an order of magnitude slower
 
-Measured 2026-09-08 on [`examples/proofs`](../examples/proofs), Kani 0.67.0,
+Measured 2026-09-08 on [`examples/vault`](../examples/vault), Kani 0.67.0,
 solver time only (the dependency-tree compile is shared and cached).
 
 **Scalar storage — seconds.**

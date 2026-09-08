@@ -1,0 +1,46 @@
+[package]
+name = "vault"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+alloy-primitives = "1.5.7"
+alloy-sol-types = "1.5.7"
+stylus-sdk = "0.10.9"
+
+# Symbolic host for `cargo kani`. Optional, and pulled in only by the `proofs`
+# feature below, so it is absent from ordinary builds.
+[dependencies.kani-stylus-core]
+path = "../../crates/kani-stylus-core"
+optional = true
+
+# Enables the in-memory TestVM for `cargo test`, per the Stylus testing guide.
+[dev-dependencies]
+stylus-sdk = { version = "0.10.9", features = ["stylus-test"] }
+
+[lib]
+crate-type = ["lib", "cdylib"]
+
+[features]
+default = ["mini-alloc"]
+export-abi = ["stylus-sdk/export-abi"]
+debug = ["stylus-sdk/debug"]
+mini-alloc = ["stylus-sdk/mini-alloc"]
+contract-client-gen = []
+
+# Verification only: `cargo kani --features proofs -Z stubbing`.
+#
+# Off by default. `stylus-test` swaps the real ArbOS host calls for a mockable
+# one -- with it enabled every hostio becomes a `panic!`, so a contract built
+# this way would be broken on chain.
+proofs = ["dep:kani-stylus-core", "stylus-sdk/stylus-test"]
+
+[profile.release]
+codegen-units = 1
+strip = true
+lto = true
+panic = "abort"
+
+# If you need to reduce the binary size, it is advisable to try other
+# optimization levels, such as "s" and "z"
+opt-level = 3

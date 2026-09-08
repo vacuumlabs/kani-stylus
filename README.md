@@ -12,7 +12,7 @@ instead of testing them one input at a time.
 
 **Status: working.** [`crates/kani-stylus-core`](crates/kani-stylus-core/) gives
 your contract a symbolic ArbOS host, and it drops into an ordinary
-`cargo stylus new` project — [`stylus-samples/counter`](stylus-samples/counter/)
+`cargo stylus new` project — [`examples/counter`](examples/counter/)
 is exactly that, with proofs added alongside its unit tests and `cargo test`,
 `cargo build` and `cargo stylus check` all unaffected. It finds real bugs: that
 stock template has a silent `U256` overflow, and Kani produces the exact
@@ -41,11 +41,11 @@ Versions this repo has been exercised against are in [`kb/40-toolchain.md`](kb/4
 
 ### 2. Run the sample contract
 
-[`stylus-samples/counter/`](stylus-samples/counter/) is a working Stylus contract
+[`examples/counter/`](examples/counter/) is a working Stylus contract
 (the `cargo stylus new` template) with `TestVM`-based unit tests.
 
 ```bash
-cd stylus-samples/counter
+cd examples/counter
 cargo test                                            # unit tests
 cargo build --target wasm32-unknown-unknown --release # build the wasm
 cargo stylus check                                    # would it activate on-chain?
@@ -65,7 +65,7 @@ few minutes; individual harnesses are seconds after that.
 
 #### It goes in your normal Stylus project
 
-[`stylus-samples/counter`](stylus-samples/counter/) is an ordinary
+[`examples/counter`](examples/counter/) is an ordinary
 `cargo stylus new` contract. Proofs live in `src/lib.rs` next to the
 `#[cfg(test)]` module, and the whole setup is three lines of `Cargo.toml`:
 
@@ -84,7 +84,7 @@ that project:
 | --- | --- |
 | `cargo test` | passes (the template's own `test_counter`) |
 | `cargo build --target wasm32-unknown-unknown --release` | 18.5 KB cdylib, no kani or `stylus-test` symbols |
-| `cargo stylus check` | passes — 6.0 KB, would activate on chain |
+| `cargo stylus check` | compiles and sizes the contract at 6.0 KB (its activation step needs a Stylus RPC) |
 | `cargo kani --features proofs` | 7 harnesses |
 
 `stylus-test` **must** stay behind that feature: it replaces the real ArbOS host
@@ -97,7 +97,7 @@ stock template can be made to *shrink* by adding to it, because `alloy`'s
 `U256 + U256` is `wrapping_add` and never panics. `--playback` prints the exact
 values.
 
-[`examples/proofs`](examples/proofs/) covers what a counter can't: mappings and
+[`examples/vault`](examples/vault/) covers what a counter can't: mappings and
 owner-gated access control.
 
 ### 4. Learn the two halves
@@ -140,16 +140,14 @@ See [`kb/20-stylus.md`](kb/20-stylus.md) and [`kb/50-feasibility.md`](kb/50-feas
 ## Layout
 
 ```
-verify.sh          run the proof suite
+verify.sh          run the proof suites
 proposal.md        the hackathon / grant pitch
 kb/                knowledge base for humans and agents
 crates/
   kani-stylus-core/  the library: SymbolicVM, slot store, keccak oracle
-stylus-samples/
-  counter/         a real `cargo stylus new` contract, with proofs in place
-                   -- the primary example
-examples/
-  proofs/          a vault: mappings and access control
+examples/          each one a real, deployable `cargo stylus new` project
+  counter/         storage, arithmetic, payable methods
+  vault/           access control and mappings
 spikes/
   kani-smoke/      the original feasibility probe, kept for the record
 ```

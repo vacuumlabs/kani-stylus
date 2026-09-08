@@ -2811,15 +2811,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "proofs"
-version = "0.1.0"
-dependencies = [
- "alloy-primitives",
- "kani-stylus-core",
- "stylus-sdk",
-]
-
-[[package]]
 name = "proptest"
 version = "1.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4254,6 +4245,7 @@ version = "0.1.0"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
+ "kani-stylus-core",
  "stylus-sdk",
 ]
 

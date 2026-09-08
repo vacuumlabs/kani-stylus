@@ -12,7 +12,7 @@ append `.md` to any docs path to get raw Markdown instead of rendered HTML.
 
 ### Start here
 - [A gentle introduction to Stylus](https://docs.arbitrum.io/stylus/gentle-introduction) — what Stylus is and why WASM alongside EVM
-- [Quickstart: write a contract in Rust](https://docs.arbitrum.io/stylus/quickstart) — the path that produced `stylus-samples/counter`
+- [Quickstart: write a contract in Rust](https://docs.arbitrum.io/stylus/quickstart) — the path that produced `examples/counter`
 - [Prerequisites and setup](https://docs.arbitrum.io/stylus/fundamentals/prerequisites)
 - [Structure of a Stylus Rust project](https://docs.arbitrum.io/stylus/fundamentals/project-structure)
 

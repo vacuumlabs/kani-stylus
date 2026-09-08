@@ -1,15 +1,13 @@
-# Verification workspace.
-#
-# `stylus-samples/counter` is deliberately NOT a member: it pins its own
-# toolchain for the wasm32 target, which would fight `cargo kani`. It stays a
-# standalone crate for build/deploy work.
+# The library lives here. Each example under `examples/` is a standalone,
+# deployable Stylus project with its own toolchain pin — exactly what
+# `cargo stylus new` produces — so they are excluded rather than made members.
+# That is the point of them: they show kani-stylus dropping into an ordinary
+# Stylus setup, not into a bespoke workspace.
 [workspace]
 resolver = "2"
-members = [
-    "crates/kani-stylus-core",
-    "examples/proofs",
-]
+members = ["crates/kani-stylus-core"]
 exclude = [
-    "stylus-samples/counter",
+    "examples/counter",
+    "examples/vault",
     "spikes/kani-smoke",
 ]

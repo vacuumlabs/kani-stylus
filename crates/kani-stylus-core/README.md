@@ -213,11 +213,17 @@ out at 420s. The same proof against `SymbolicVM` takes 6s. See
 
 ## Examples
 
-**[`stylus-samples/counter`](../../stylus-samples/counter)** is the place to
-start: an ordinary `cargo stylus new` contract with proofs added in place, next
-to its existing unit tests. `cargo test`, `cargo build` and `cargo stylus check`
-behave exactly as they did before — confirmed by inspecting the built wasm for
-`kani` and `stylus-test` symbols (there are none).
+Both are real, deployable `cargo stylus new` projects with proofs added in
+place, next to their existing unit tests — not bespoke verification crates.
 
-[`examples/proofs`](../../examples/proofs) covers what a counter cannot: a vault
-with owner-gated methods over a symbolic caller, and mappings.
+**[`examples/counter`](../../examples/counter)** is the place to start: the
+stock template. Storage round-trips, three silently-wrapping arithmetic methods,
+and a `#[payable]` method proved over every possible `msg_value`.
+
+**[`examples/vault`](../../examples/vault)** covers what a counter cannot:
+owner-gated methods over a symbolic caller, and mappings (so it needs
+`-Z stubbing`).
+
+In both, `cargo test` and `cargo build` behave exactly as they did before —
+confirmed by inspecting the built wasm for `kani` and `stylus-test` symbols
+(there are none).

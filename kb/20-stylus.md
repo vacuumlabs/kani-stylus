@@ -148,7 +148,7 @@ Two consequences for a symbolic model:
 
 ## Packaging: how verification attaches to a real contract
 
-Verified 2026-09-08 against `stylus-samples/counter`, an unmodified
+Verified 2026-09-08 against `examples/counter`, an unmodified
 `cargo stylus new` project.
 
 Two constraints interact, and getting either wrong is bad:
@@ -188,7 +188,10 @@ compile_error!("proofs need the `proofs` feature: cargo kani --features proofs")
 **Confirmed non-invasive.** On that project: `cargo test` passes, the release
 wasm is a 18.5 KB cdylib containing no `kani` symbols and no `stylus-test` panic
 stub (checked with `strings`) while still importing the real `vm_hooks`, and
-`cargo stylus check` passes at 6.0 KB.
+`cargo stylus check` compiles and sizes it at 6.0 KB. Note that check's
+*activation* step needs a Stylus RPC (default `localhost:8547`) — with a
+devnode up it reported a 0.000071 ETH data fee; offline it stops after the size
+report, which is a missing node rather than a problem with the contract.
 
 **The `rust-toolchain.toml` pin is a non-issue.** The template pins Rust 1.91.0
 for the wasm target; `cargo kani` drives its own toolchain regardless and was
@@ -226,7 +229,7 @@ See [`crates/kani-stylus-core/src/keccak.rs`](../crates/kani-stylus-core/src/kec
 `stylus-sdk` with `--features stylus-test` pulls in the `stylus-test` crate
 (non-wasm targets only) providing `stylus_sdk::testing::TestVM` — a concrete
 in-memory host with setters like `vm.set_value(...)`, `vm.set_sender(...)`.
-`stylus-samples/counter/src/lib.rs` already uses it.
+`examples/counter/src/lib.rs` already uses it.
 
 `TestVM` is the closest prior art and a useful reference for *what* each host
 method should return — but it **cannot be used under Kani**. Its `VMState` holds

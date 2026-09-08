@@ -22,25 +22,26 @@ alongside it — the proposal's central technical premise needs revising.
 
 ```
 kani-stylus/
-├── Cargo.toml           workspace over crates/ and examples/
+├── Cargo.toml           workspace over crates/ only
+├── verify.sh            run the proof suites
 ├── README.md            getting started (links out to upstream docs)
 ├── proposal.md          the hackathon/grant pitch
 ├── kb/                  this knowledge base
 ├── crates/
 │   └── kani-stylus-core/  the library: SymbolicVM, slot store, keccak oracle
-├── examples/
-│   └── proofs/          a vault: mappings and access control
-├── spikes/
-│   └── kani-smoke/      the original feasibility probe (kept for the record)
-└── stylus-samples/
-    └── counter/         a real `cargo stylus new` contract with proofs added
-                         in place — the primary example
+├── examples/            each a real, deployable `cargo stylus new` project
+│   ├── counter/         storage, arithmetic, payable methods
+│   └── vault/           access control and mappings
+└── spikes/
+    └── kani-smoke/      the original feasibility probe, kept for the record
 ```
 
-`stylus-samples/counter` and `spikes/kani-smoke` are **excluded** from the
-workspace so the counter stays a standalone, deployable project — which is the
-point of it. Its `rust-toolchain.toml` pin turned out **not** to interfere with
-`cargo kani`, so that is not a reason to keep it out.
+Everything under `examples/` is **excluded** from the workspace, deliberately.
+Each one is a standalone, deployable project with its own toolchain pin, exactly
+as `cargo stylus new` produces it — that is the point of them: they show
+kani-stylus dropping into an ordinary Stylus setup rather than into a bespoke
+workspace. (The `rust-toolchain.toml` pin turned out **not** to interfere with
+`cargo kani`, so that is not the reason.)
 
 ### Where new code should go
 
@@ -50,8 +51,10 @@ nothing for a proc macro to do, since `#[kani::proof]` already exists and
 `SymbolicVM` is an ordinary value. Add a macro crate only if a real ergonomic
 need shows up.
 
-Worked examples go in `examples/proofs`. That crate is the main usability
-deliverable: it is what a newcomer reads to learn the tool.
+Worked examples go in `examples/`, one directory per contract, each created
+with `cargo stylus new`. They are the main usability deliverable: what a
+newcomer reads to learn the tool, and the proof that it works on a normal
+project.
 
 ### On vendoring the Kani repo
 
@@ -83,7 +86,7 @@ git clone --depth 1 https://github.com/model-checking/kani vendor/kani  # vendor
       wired in with `#[kani::stub]`: Stylus mappings call
       `stylus_sdk::crypto::keccak` directly, *not* through the `Host` trait, so
       implementing `native_keccak256` alone is not enough.
-- [x] **Worked examples** in [`examples/proofs`](../examples/proofs) — a
+- [x] **Worked examples** in [`examples/vault`](../examples/vault) — a
       verified counter (with the real overflow bug and its counterexample) and a
       vault covering access control and mappings.
 - [ ] Sharpen the usability story: a short "write your first proof" walkthrough,
