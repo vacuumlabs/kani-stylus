@@ -102,7 +102,7 @@ pub mod storage;
 #[cfg(kani)]
 pub use context::{any_address, any_u256, Context};
 #[cfg(kani)]
-pub use host::{SymbolicVM, SymbolicVm};
+pub use host::{StorageSnapshot, SymbolicVM, SymbolicVm};
 #[cfg(kani)]
 pub use keccak::{keccak_stub, HashOracle};
 #[cfg(kani)]

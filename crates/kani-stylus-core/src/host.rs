@@ -105,7 +105,39 @@ impl<const SLOTS: usize> SymbolicVm<SLOTS> {
     pub fn hashes_taken(&self) -> usize {
         keccak::hashes_taken()
     }
+
+    /// Freeze the current storage, for use with [`Self::slots_changed_since`].
+    ///
+    /// This is how you state a **frame condition** — "the call changed exactly
+    /// these slots and nothing else" — which is the half of a conservation
+    /// argument that asserting deltas alone does not give you.
+    ///
+    /// ```ignore
+    /// let before = vm.snapshot();
+    /// token.transfer(to, amount).unwrap();
+    /// // `<=`, not `==`: a frame condition is an upper bound on what moved,
+    /// // and a zero-amount transfer changes nothing at all.
+    /// assert!(vm.slots_changed_since(&before) <= 2, "transfer wrote a third slot");
+    /// ```
+    ///
+    /// Note this counts *slots*, not accounts, and it can only see slots the
+    /// proof actually touched. For the stronger statement — "no **other
+    /// address**'s balance moved" — read a third symbolic address assumed
+    /// distinct from the others and assert its balance is unchanged; a symbolic
+    /// address covers every address at once. That is stronger but costs another
+    /// mapping access. See `examples/vault` for both forms side by side.
+    pub fn snapshot(&self) -> StorageSnapshot<SLOTS> {
+        StorageSnapshot(self.state.borrow().slots.clone())
+    }
+
+    /// Number of storage slots whose value differs from `before`.
+    pub fn slots_changed_since(&self, before: &StorageSnapshot<SLOTS>) -> usize {
+        self.state.borrow().slots.changed_since(&before.0)
+    }
 }
+
+/// Storage frozen at a point in time. Produced by [`SymbolicVm::snapshot`].
+pub struct StorageSnapshot<const SLOTS: usize>(SlotStore<SLOTS>);
 
 impl<const SLOTS: usize> Default for SymbolicVm<SLOTS> {
     fn default() -> Self {

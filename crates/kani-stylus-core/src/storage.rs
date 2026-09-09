@@ -68,6 +68,28 @@ impl<const SLOTS: usize> SlotStore<SLOTS> {
         self.vals[self.len] = value;
         self.len += 1;
     }
+
+    /// Number of slots whose value differs from `before`.
+    ///
+    /// The basis of a *frame condition*: "this method changed exactly these
+    /// slots and no others". Only keys present in `self` can differ, because
+    /// `store` never removes a key — so `before`'s keys are a subset of ours
+    /// and scanning ours is enough. Unwritten slots read as zero on both
+    /// sides, so a newly written zero correctly counts as unchanged.
+    ///
+    /// Costs up to `SLOTS^2` symbolic 256-bit comparisons, so keep `SLOTS`
+    /// tight in proofs that use it.
+    pub fn changed_since(&self, before: &Self) -> usize {
+        let mut changed = 0;
+        let mut i = 0;
+        while i < self.len {
+            if self.vals[i] != before.load(self.keys[i]) {
+                changed += 1;
+            }
+            i += 1;
+        }
+        changed
+    }
 }
 
 impl<const SLOTS: usize> Default for SlotStore<SLOTS> {
