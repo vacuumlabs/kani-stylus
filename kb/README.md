@@ -12,6 +12,7 @@ Read these in order when picking up the project cold:
 | [30-kani.md](30-kani.md) | What Kani can and can't verify, and how it's driven |
 | [40-toolchain.md](40-toolchain.md) | Local versions, environment gotchas |
 | [50-feasibility.md](50-feasibility.md) | Proposal claims vs. what the source says; open questions |
+| [60-roadmap.md](60-roadmap.md) | What's next and in what order; why it differs from the proposal |
 
 ## Ground rules for agents
 

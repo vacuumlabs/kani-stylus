@@ -13,7 +13,9 @@ alongside it — the proposal's central technical premise needs revising.
 1. A crate that gives a Stylus contract a **symbolic** host environment, so
    `kani::any()` values flow through storage reads, calldata, and `msg::sender()`.
 2. At least two real proofs over a non-trivial contract (ERC-20 balance
-   conservation; owner-only access control).
+   conservation; owner-only access control). **Both done** — conservation by
+   local-delta lemmas rather than by summing balances, which a bounded model
+   checker cannot express. See [50-feasibility.md](50-feasibility.md).
 3. A demonstration that Kani produces a **concrete counterexample** when a bug
    is deliberately injected — this is the part that makes the demo land.
 4. One command that runs the whole proof suite.
@@ -88,11 +90,23 @@ git clone --depth 1 https://github.com/model-checking/kani vendor/kani  # vendor
       added in place: [`examples/counter`](../examples/counter) (7 harnesses,
       380s) and [`examples/vault`](../examples/vault) (7 harnesses, 3155s).
       14 of 14 verify.
-- [ ] Sharpen the usability story: a short "write your first proof" walkthrough,
-      and a single command that runs the whole suite.
+- [x] **One command runs the whole suite** — [`verify.sh`](../verify.sh), with
+      `--playback` for counterexamples.
+- [x] **Conservation proved (2026-09-09).** `examples/vault` gained `transfer`
+      and three local-delta lemmas (463s / 1836s / 1904s). The summed form
+      `total == Σ balance(aᵢ)` is unstatable in a bounded model checker and was
+      abandoned; conservation is decomposed into per-method delta + frame
+      lemmas, with the induction over call sequences a **disclosed hand
+      argument**. New API: `vm.snapshot()` / `vm.slots_changed_since()`.
+- [ ] A short **"write your first proof" walkthrough**. README §4 links out to
+      upstream docs; nothing yet takes a developer from their own contract to a
+      first passing harness.
 - [ ] A more substantial verification target. ERC-20 is a plausible stepping
       stone but is **not** settled — the interesting goal is something closer to
-      a real DeFi contract. Decide once the basics are solid.
+      a real DeFi contract. Blocked on mapping proof cost.
+
+**What comes after this list, and in what order, is in
+[60-roadmap.md](60-roadmap.md).**
 
 ### Deliberately not doing
 
