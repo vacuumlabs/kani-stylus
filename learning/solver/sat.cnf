@@ -1,0 +1,14 @@
+c DIMACS CNF: the format every SAT solver eats.
+c   p cnf <#vars> <#clauses>, then one clause per line, literals
+c   space-separated and 0-terminated. Negation is a minus sign.
+c
+c This encodes: (x1 or x2) and (not x1 or x3) and (not x3).
+c   z3 learning/solver/sat.cnf   ->   sat -1 2 3
+c i.e. x1=false, x2=true, x3=false.
+c
+c Add the clause "-2 0" (x2 must be false) and it becomes UNSATISFIABLE:
+c that is what a *proved* property looks like at this layer.
+p cnf 3 3
+1 2 0
+-1 3 0
+-3 0
