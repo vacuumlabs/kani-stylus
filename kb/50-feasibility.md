@@ -362,7 +362,9 @@ code rather than a convenient subset.
 All numbers measured 2026-09-08 on the two example projects, Kani 0.67.0,
 solver time only (the dependency-tree compile is shared and cached).
 **14 of 14 harnesses verify** — 7 in `examples/counter` (380s total), 7 in
-`examples/vault` (3155s total).
+`examples/vault` (3155s total). Superseded in part: `examples/vault` gained
+three conservation harnesses on 2026-09-09, verified individually but not yet
+in a clean suite run. See "Conservation by local deltas".
 
 **Scalar storage — seconds.**
 

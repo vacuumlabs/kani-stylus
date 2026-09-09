@@ -88,8 +88,13 @@ git clone --depth 1 https://github.com/model-checking/kani vendor/kani  # vendor
       implementing `native_keccak256` alone is not enough.
 - [x] **Worked examples**, both real `cargo stylus new` projects with proofs
       added in place: [`examples/counter`](../examples/counter) (7 harnesses,
-      380s) and [`examples/vault`](../examples/vault) (7 harnesses, 3155s).
-      14 of 14 verify.
+      380s) and [`examples/vault`](../examples/vault) (3155s).
+      14 of 14 verified as of 2026-09-08. **`examples/vault` has since grown to
+      10 harnesses**; the three added on 2026-09-09 were each verified
+      individually, but a clean full-suite run has not completed — the one
+      attempted was OOM-killed on its second harness. So "17 of 17" is not
+      established, and re-running the suite (one cgroup per harness) is the
+      outstanding task.
 - [x] **One command runs the whole suite** — [`verify.sh`](../verify.sh), with
       `--playback` for counterexamples.
 - [x] **Conservation proved (2026-09-09).** `examples/vault` gained `transfer`
