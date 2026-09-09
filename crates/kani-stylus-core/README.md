@@ -95,6 +95,7 @@ all behave exactly as before, because none of them enable `proofs`.
 | `any_u256()` / `any_address()` | symbolic values of the right shape |
 | `SymbolicVm::<64>` | raise the storage-slot bound from the default 16 |
 | `vm.slots_touched()` / `vm.hashes_taken()` | check a bound isn't silently binding |
+| `vm.snapshot()` / `vm.slots_changed_since(&s)` | frame conditions — "this call changed nothing else" |
 
 ## Mappings need the keccak stub
 
@@ -116,6 +117,60 @@ and `cargo kani -Z stubbing`.
 The stub models keccak256 as an **uninterpreted injective function**: the same
 preimage always gives the same digest, distinct preimages always give distinct
 digests, and nothing else is assumed. The solver never sees a round of keccak.
+
+## Conservation properties: prove them by local deltas
+
+The property everyone wants from a token is `total == sum of every balance`.
+**A bounded model checker cannot state it** — there is no quantifying over 2^160
+addresses, and summing N of them explicitly did not converge even at N = 2.
+
+Decompose it instead. For each method, prove *locally*, from an **arbitrary**
+pre-state, that
+
+1. it moves `total` by exactly the net amount it moves balances by, and
+2. it changes nothing else — the **frame condition**.
+
+Global conservation then follows by induction over any call sequence: if the sum
+invariant held before a call, (1) and (2) say it holds after.
+
+**Be explicit that the induction step is a hand argument.** Kani proves the
+per-method lemmas; composing them over sequences is on paper. This is the
+standard decomposition — it is what Certora rules do for Solidity, and nobody
+sums 2^160 balances — but say so rather than implying the sum was checked.
+
+Two ways to write the frame condition, both in
+[`examples/vault`](../../examples/vault):
+
+```rust
+// Cheap: count slots. Needs no knowledge of slot derivation.
+let before = vm.snapshot();
+v.transfer(to, amount).unwrap();
+assert!(vm.slots_changed_since(&before) <= 2, "transfer wrote a third slot");
+
+// Stronger: a symbolic third party. `unsat` then covers *every* other
+// address at once — the universal quantifier you get for free from proving
+// no counterexample exists. Costs one more mapping access.
+let other = any_address();
+kani::assume(other != from && other != to);
+let before_other = v.balance_of(other);
+v.transfer(to, amount).unwrap();
+assert_eq!(v.balance_of(other), before_other);
+```
+
+Note `<=`, not `==`: a frame condition is an upper bound on what moved. With
+`amount == 0` nothing changes, and that is fine.
+
+Two practical notes:
+
+- **Use `checked_add`/`checked_sub` in the assertions too**, not just in the
+  contract. Bare `+` on `U256` wraps, so `assert_eq!(after, before + amount)`
+  quietly proves something weaker than you meant.
+- **Tighten `SLOTS`.** `changed_since` costs up to `SLOTS^2` symbolic 256-bit
+  comparisons, and the conservation lemmas simply cannot be *encoded* within
+  5 GiB above `SymbolicVm::<4>`. This buys memory, not time — see
+  [`kb/50-feasibility.md`](../../kb/50-feasibility.md). Pair it with
+  `kani::cover!(vm.slots_touched() == 3)` so a too-tight bound fails loudly
+  instead of passing vacuously.
 
 ## Two traps worth knowing before you trust a result
 
@@ -160,10 +215,22 @@ slots you touch, not by how much contract code runs. Measured on the examples
 | `vault::credit_can_silently_wrap` | 1 account, 2 writes | 561s |
 | `vault::credit_checked_never_wraps` | 1 account, 2 guarded writes | 675s |
 | `vault::distinct_accounts_do_not_alias` | 2 accounts, 2 guarded writes | 1236s |
+| `vault::credit_checked_moves_total_by_the_same_delta` | 1 account, delta + frame | 463s |
+| `vault::transfer_conserves_total` | 2 accounts, delta + frame | 1836s |
+| `vault::transfer_does_not_move_any_other_balance` | 3 accounts, symbolic frame | 1904s |
 
-A property spanning several mapping accounts is the current limit: a two-account
-`total == balance(a) + balance(b)` conservation proof has not been seen to
-converge. See [`kb/50-feasibility.md`](../../kb/50-feasibility.md).
+Half an hour per harness is the practical ceiling today, and the **binding
+constraint is memory, not time**: one `cbmc` on a mapping proof needs 6.4–10 GiB,
+so these proofs are effectively serial on a laptop regardless of core count. Run
+them one at a time — two at once OOM-killed a 23 GiB machine and took the editor
+with it, because terminal children share its systemd scope. The
+`systemd-run --user` recipe that avoids this is in
+[`kb/40-toolchain.md`](../../kb/40-toolchain.md).
+
+Note the last row: adding a *third* symbolic account for the strong frame
+condition cost only 68s over the two-account version — the marginal account is
+much cheaper than the first one. See
+[`kb/50-feasibility.md`](../../kb/50-feasibility.md).
 
 In rough order of what to reach for when something is slow:
 
@@ -177,8 +244,14 @@ In rough order of what to reach for when something is slow:
    dropping if the property doesn't depend on the caller.
 3. **Constrain hard with `kani::assume`.** Every precondition you state is input
    space the solver doesn't explore.
-4. Keep `SLOTS` just large enough; each extra slot costs a symbolic 256-bit
-   comparison on every load and store.
+4. **Keep `SLOTS` just large enough — for memory, not speed.** Measured
+   2026-09-09: varying `SLOTS` from 2 to 16 changes the formula 2.5x but leaves
+   solve time flat (157s / 196s / 185s / 192s). What it buys is *encodability*:
+   `transfer_conserves_total` cannot be encoded within 5 GiB above
+   `SymbolicVm::<4>`. Since memory is the binding constraint, a tight bound is
+   still the difference between a proof running and not — it just will not make
+   a running proof faster. Pair it with `kani::cover!` so a too-tight bound
+   fails loudly instead of passing vacuously.
 5. Iterate with `--harness <name>`; only run the full suite when you mean it.
 
 ## What is and isn't modelled

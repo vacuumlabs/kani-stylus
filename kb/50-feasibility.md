@@ -58,39 +58,62 @@ use.** The proposal's framing may be accurate for pre-0.8 SDKs, where
 
 ## Open questions
 
-Ordered by how much they gate the plan.
+Ordered by how much they gate the plan. Answers below were established by the
+experiments recorded later in this file; each says how it was verified.
 
 1. ~~**Does `cargo kani` complete a build against `stylus-sdk --features
-   stylus-test`?**~~ — **Answered 2026-09-08: yes, it builds and instruments;
-   but a trivial harness does not converge in 25 minutes.** See
-   "Smoke test" below. This is now the project's gating risk, restated as:
-   **can the dependency surface be pruned enough for proofs to converge?**
-   Two concrete causes identified (runtime regex in `stylus-core`; a 268-crate
-   tree including tokio/reqwest under `--features stylus-test`), both with
-   plausible fixes.
-2. **Does dynamic dispatch through `Box<dyn Host>` blow up the encoding?**
-   Every host call goes through a trait object under `stylus-test`. If proofs
-   don't converge, monomorphising past the box is the first lever. Not yet
-   isolated — the regex noise in the spike swamps any signal about dispatch.
-3. **How do we model keccak256?** Needed for storage mappings (ERC-20 balances)
-   and unavoidable for the flagship proof. Real keccak is intractable for an SMT
-   solver. Plan: uninterpreted injective function. Needs prototyping, and the
-   assumption must be disclosed in results.
-4. **Do `U256` operations converge?** `ruint`'s `U256` is 4×`u64` limbs. 256-bit
-   symbolic arithmetic is expensive. Mitigation: prove over narrower values
-   first, widen once green.
+   stylus-test`, and can the dependency surface be pruned enough for proofs to
+   converge?**~~ — **Answered 2026-09-08: yes, by not using `TestVM`.** The
+   268-crate tree (tokio/reqwest included) costs compile time but never enters
+   the goto program as long as nothing constructs a `TestVM`. Verified by the
+   two example suites: 14 of 14 harnesses verify. The regex hypothesis was
+   wrong — see "Superseded" at the end of this file.
+2. ~~**Does dynamic dispatch through `Box<dyn Host>` blow up the encoding?**~~ —
+   **Answered 2026-09-08 in practice: it is not the bottleneck.** Scalar proofs
+   land in 6–90s with the box in place. Never isolated as its own experiment, so
+   this is "not the binding constraint" rather than "free"; the measured
+   bottleneck is symbolic mapping keys in `SlotStore` (question 8).
+3. ~~**How do we model keccak256?**~~ — **Answered 2026-09-08: an uninterpreted
+   injective function**, implemented in
+   [`crates/kani-stylus-core/src/keccak.rs`](../crates/kani-stylus-core/src/keccak.rs).
+   An 8-entry preimage/digest table; a new preimage mints a fresh symbolic
+   digest, `assume`d distinct from every previous digest and `assume`d above
+   slot 2^32. Needs `-Z stubbing` and an explicit `#[kani::stub]` per harness,
+   because `stylus_sdk::crypto::keccak` bypasses the `Host` trait. Mapping
+   proofs verify; the assumption is disclosed in the crate README.
+4. ~~**Do `U256` operations converge?**~~ — **Answered 2026-09-08: yes, at full
+   width.** `counter::mul_number_can_wrap` 80s and
+   `add_number_is_exact_when_it_does_not_overflow` 65s, both over fully symbolic
+   `U256`. Narrowing to `u64` shapes remains a useful lever, not a necessity.
 5. **Is OpenZeppelin `rust-contracts-stylus` ERC-20 tractable, or do we need our
-   own minimal ERC-20?** The OZ target is far more credible for a grant. A
-   hand-rolled minimal ERC-20 is the fallback if OZ's abstraction depth defeats
-   the solver. Decide early — it shapes Hours 24–36.
-6. **`rust-toolchain.toml` interaction.** See [40-toolchain.md](40-toolchain.md).
+   own minimal ERC-20?** **Still open, and now the most consequential question
+   here.** Neither has been attempted; `examples/vault` is a hand-rolled
+   stand-in that exercises mappings but is not a real ERC-20. Gated by
+   question 8.
+6. ~~**`rust-toolchain.toml` interaction.**~~ — **Answered 2026-09-08: not a
+   problem.** `cargo kani` runs fine inside a crate pinning its own toolchain.
+   See [40-toolchain.md](40-toolchain.md).
 7. **Does `#[public]`/`sol_storage!` macro-generated code verify cleanly?**
-   `stylus-proc` generates routers and storage accessors. Proving at the
-   *method* level (calling `contract.transfer(..)` directly) sidesteps the ABI
-   router entirely and is the pragmatic MVP path. Proving through raw calldata
-   into the router — which is what "panic freedom over arbitrary calldata"
-   really requires — is strictly harder. The proposal conflates the two; the
-   MVP should do method-level and say so.
+   **Partially answered 2026-09-08.** Method-level proofs verify cleanly against
+   `sol_storage!`-generated storage accessors in both examples. Proving *through*
+   the ABI router from raw calldata — which is what "panic freedom over arbitrary
+   calldata" actually requires — remains unattempted and is strictly harder. The
+   proposal conflates the two; say method-level explicitly in any writeup.
+8. **Can mapping proofs be made cheap enough for multi-account properties?**
+   Raised 2026-09-09 and **immediately downgraded from "gating" the same day.**
+   Conservation turned out not to need it — reformulating as local-delta lemmas
+   converges today at 463–1904s per harness (see "Conservation by local deltas").
+   What remains is pace and reach: half an hour per harness makes iteration
+   miserable, and 6.4–10 GiB per `cbmc` caps how many accounts fit. Diagnosis
+   and the remaining levers are in the mappings section; confirm by varying
+   `SLOTS` alone before optimising.
+9. **How do we express properties over *sequences* of calls?** Raised
+   2026-09-09. Every harness today proves one method call from a hand-havoc'd
+   state, but the properties contract authors want ("no sequence of calls
+   breaks this") need either an inductive invariant — base case plus a step case
+   from arbitrary state satisfying the invariant — or a bounded symbolic-action
+   dispatcher. Neither is prototyped, and there is no `SymbolicVM::havoc()` to
+   build the arbitrary pre-state conveniently.
 
 ## Scope judgements
 
@@ -380,208 +403,165 @@ solver time only (the dependency-tree compile is shared and cached).
    mapping-heavy ones, `concrete_ctx()` is a real lever when the property does
    not depend on the caller.
 
-**Still open: multi-account conservation.** A harness asserting
+**Multi-account conservation — superseded 2026-09-09.** A harness asserting
 `total == balance(a) + balance(b)` across two accounts was not seen to converge
-in 23 minutes. `distinct_accounts_do_not_alias` shows two-account mapping proofs
-*can* finish, so this is a matter of degree rather than a wall — but it is the
-one property in the original ERC-20 pitch that has not been demonstrated.
+in 23 minutes. That harness has been **abandoned rather than optimised**: the
+summed form is the wrong thing to ask a bounded model checker for. See
+"Conservation by local deltas" below, which gets the property another way and
+converges today.
 
-**Likely cause, not yet confirmed.** Mapping slot keys are *symbolic* `U256`
-digests, so `SlotStore`'s linear scan performs up to `SLOTS` symbolic 256-bit
-equality comparisons on *every* load and store; more accounts means both more
-scans and more entries to scan against. The counter's slots are small concrete
-numbers, where the same scan is trivial.
+**Likely cause — tested 2026-09-09 and WRONG about time.** The standing
+hypothesis was that `SlotStore`'s linear scan of up to `SLOTS` symbolic 256-bit
+keys drives the cost. It drives *formula size* but not *solve time*: see
+"`SLOTS` is a memory dial, not a time dial" below. What actually makes mapping
+proofs slow is still unknown.
 
-Levers, cheapest first:
+Of the four levers once listed here, two were **measured on 2026-09-09 and do
+not help with time** — lowering `SLOTS`, and giving digests a concrete high-bit
+discriminator. Two remain untested: a two-tier slot store (concrete scalar slots
+direct-indexed, keccak slots in a short list), and narrowing balances to
+`u64`-shaped values. See the findings that follow.
 
-1. Lower the default `SLOTS` from 16 — most single proofs touch a handful.
-2. Two-tier slot store: concrete scalar slots in a small direct-indexed array,
-   keccak-derived slots in a separate short list.
-3. Narrow balances to `u64`-shaped values where the property is not about the
-   256-bit boundary.
-4. Have the oracle return digests with a concrete discriminator in the high bits
-   so slot comparison can short-circuit. Weakens the model; needs care.
+### Result: conservation by local deltas (2026-09-09)
 
-**Confirm before optimising.** Vary `SLOTS` alone and measure — the same staged
-method that found the `TestVM` problem. This is the main open engineering
-question and it gates how large a target is realistic.
+`total == sum of every balance` **cannot be stated in a bounded model checker**:
+there is no quantifying over 2^160 addresses, and the summed two-account form
+above never converged. Asking for it directly was the mistake.
 
-### Finding: Kani does NOT catch `U256` overflow for free
+Decomposed instead. For each method, prove *locally*, from an **arbitrary**
+pre-state, that (a) it moves `total` by exactly the net amount it moves balances
+by, and (b) it changes nothing else — the **frame condition**. Global
+conservation then follows by induction over any call sequence.
 
-The proposal lists "arithmetic overflow absence" as something Kani checks
-automatically. **For Stylus contracts this is false**, and the reason matters.
+**The induction step is a hand argument, not machine-checked.** Kani proves the
+per-method lemmas; composing them over sequences is on paper. This is the
+standard decomposition — it is what Certora rules do for Solidity — but it must
+be stated rather than implied. Machine-checking the composition is roadmap
+item 2 (see [60-roadmap.md](60-roadmap.md)).
 
-`alloy`'s `U256` is `ruint::Uint<256, 4>`, and `ruint/src/add.rs` ends with:
+`examples/vault` gained a `transfer` method (checked throughout; rejects
+self-transfer, since `from == to` with naive read-modify-write is a standard way
+to mint from nothing) and three lemmas. All verify, measured one at a time:
 
-```rust
-impl_bin_op!(Add, add, AddAssign, add_assign, wrapping_add);
-impl_bin_op!(Sub, sub, SubAssign, sub_assign, wrapping_sub);
-```
+| Harness | Shape | Checks | Time |
+| --- | --- | --- | --- |
+| `credit_checked_moves_total_by_the_same_delta` | 1 account, 2 slots | 1448 | ✅ 463s |
+| `transfer_conserves_total` | 2 accounts, 3 slots | 1501 | ✅ 1836s |
+| `transfer_does_not_move_any_other_balance` | 3 accounts | 1457 | ✅ 1904s |
 
-So `a + b` on `U256` **is** `wrapping_add`. It never panics. Internally it
-combines limbs with `carrying_add` on `u64`, which is explicitly wrapping, so
-Kani's built-in overflow checks — which only fire on primitive integer
-operations — see nothing to complain about either.
+The first two report `1 of 1 cover properties satisfied`, so the expected slot
+counts are reachable and neither proof is vacuous — worth checking, because they
+run at `SymbolicVm::<4>` rather than the default 16.
 
-Measured: a harness applying `add_number` to two fully symbolic `U256` values
-reports `0 of 1043 failed`. There is no panic to find.
+**Two ways to write the frame condition**, both kept in the example so the
+trade-off stays visible:
 
-Consequences:
+1. **Count slots** — new API `vm.snapshot()` / `vm.slots_changed_since(&s)`,
+   backed by `SlotStore::changed_since`. Cheap and needs no knowledge of slot
+   derivation, but bounds only *how many* slots moved, not which. Note the
+   assertion is `<=`, not `==`: a frame condition is an upper bound, and a
+   zero-amount call changes nothing.
+2. **A symbolic third party** — `other` assumed distinct from both parties, so
+   `unsat` covers every remaining address at once. This is the universal
+   quantifier a BMC gives you for free, and it is what
+   `transfer_does_not_move_any_other_balance` uses. Strictly stronger, and it
+   costs a third mapping account (1904s vs 1836s — cheaper than expected).
 
-- **The stock Stylus counter template silently wraps.** `add_number` and
-  `mul_number` in `examples/counter` have no overflow protection.
-  Solidity >= 0.8 would revert here; Rust on Stylus does not.
-- Every Stylus contract doing token arithmetic with bare `+`/`-`/`*` on `U256`
-  has the same exposure, and neither `cargo test` nor a naive `cargo kani` run
-  will surface it.
-- **This raises the project's value.** kani-stylus is not just a plumbing layer
-  that makes Kani runnable; it has to ship the arithmetic properties Kani cannot
-  infer. "Prove your token math doesn't wrap" is a concrete, demonstrable pitch
-  with a real counterexample behind it.
+**`changed_since` costs up to `SLOTS^2` symbolic 256-bit comparisons**, which is
+why these harnesses drop to `SymbolicVm::<4>`. That drop was *not* measured in
+isolation, so its contribution to the times above is unknown.
 
-Practically, proof obligations should take the shape of `d3` in the spike:
-`kani::assume(a.checked_add(b).is_some())` for the intended-behaviour proof,
-plus a separate harness showing the unguarded version wraps.
+**Use `checked_add`/`checked_sub` in the assertions, not just the contract.**
+Bare `+` on `U256` wraps, so `assert_eq!(after, before + amount)` proves
+something weaker than intended. The lemmas above assert
+`before.checked_add(amount).unwrap()`, which is provable precisely because the
+method returned `Ok`.
 
-### Result: defect detection works
+### Finding: `SLOTS` is a memory dial, not a time dial (2026-09-09)
 
-The other half of feasibility — a verifier that cannot fail is worthless.
+The long-standing hypothesis — that `SlotStore`'s scan of up to `SLOTS` symbolic
+256-bit keys is what makes mapping proofs slow — is **wrong about time**.
+Measured on `vault::credit_then_read_roundtrips`, varying `SLOTS` alone,
+one sample per point on an otherwise idle machine:
 
-| Harness | Intent | Result |
-| --- | --- | --- |
-| `d1_add_number_can_decrease_the_counter` | must FAIL: adding can decrease the counter | ✅ 1 of 1110 checks failed, panic found as expected, 26s |
-| `d2_add_number_is_exactly_wrapping` | pins the semantics: result `== a.wrapping_add(b)` | ✅ 25s |
-| `d3_add_number_exact_when_no_overflow` | control: exact once overflow is assumed away | ✅ 34s |
+| `SLOTS` | CNF variables | CNF clauses | solve time |
+| --- | --- | --- | --- |
+| 2 | 725,615 | 1,905,301 | 157s |
+| 4 | 860,521 | 2,454,434 | 196s |
+| 8 | 1,154,931 | 3,646,905 | 185s |
+| 16 (default) | 1,842,077 | 6,408,226 | 192s |
 
-`d1` is a genuine bug in the stock `cargo stylus new` template, found
-automatically over the full 2^256 input space. `d2` proves it is precisely a
-wrap rather than some other fault, and `d3` shows the guarded version is exact —
-together they make the demo airtight rather than a single red line.
+Formula size varies **2.5x**; solve time is flat and not even monotonic. The
+clauses contributed by unused slots are evidently dispatched by unit propagation
+without adding search. Size grows linearly — `vars ≈ 566k + 80k × SLOTS` — so
+roughly 566k variables are irreducible (SDK, contract, oracle).
 
-**Concrete playback works**, and is the demo asset. It needs the unstable flag:
+Caveat: one harness, one sample per point. It rules out a *large* effect, not a
+10% one.
 
-```bash
-cargo kani -Z concrete-playback --concrete-playback=print \
-    --harness d1_add_number_can_decrease_the_counter
-```
+**`SLOTS` still matters, for memory.** Size decides whether a proof can be
+encoded at all, and memory is the binding constraint (next section).
+`transfer_conserves_total` needs 6,624,296 vars / 26,361,004 clauses at
+`SLOTS=4` and **could not be encoded within 5 GiB at `SLOTS=8` or `16`**. So the
+conservation lemmas' `SymbolicVm::<4>` is load-bearing — but for encodability,
+not speed.
 
-Kani emits a runnable `#[test]` carrying the 64 witness bytes (two `[u8; 32]`
-draws). Decoded, the counterexample it found is:
+Two other size levers were measured on the same harness and are **not worth
+taking**: `MAX_HASHES` 8→4→2 changes the formula by ~1% (the oracle's loops run
+to `self.len`, the actual number of hashes, not to the bound), and giving
+digests a fixed high prefix so only 64 bits stay symbolic buys ~7%.
 
-```
-a       = 115792089237316195420432434140994567471862513504418138526629138312939329028097
-b       = 115792089237316195414155332405607886707005876980447656720081318813958861225983
-a + b   >= 2^256, so it wraps to
-result  = 115792089237316195411016781537914546325598405819225231207252873118985060614144
-```
+**Methodological warning.** Formula size was used as a fast proxy for solver
+cost — `--cbmc-args --dimacs --outfile` skips solving, turning a 30-minute loop
+into 2 minutes. The proxy is **invalid** for this workload, as the table shows.
+It is still the right tool for predicting *memory* and encodability. Rank
+time optimisations by real solves only.
 
-`result < a` — the counter went *down* after adding to it. That is the whole
-pitch in one screenshot: a real bug in the stock template, an exact witness, and
-a test you can paste into the repo, all from one 26-second command.
+**Solver choice buys ~10% at best** — measured the same day on the same
+harness, shipped config:
 
-### Result: it works in an unmodified `cargo stylus new` project
-
-The point of the tool is that a Stylus developer adds it to the project they
-already have. Verified 2026-09-08 on
-[`examples/counter`](../examples/counter) — the stock template, with
-proofs added to `src/lib.rs` beside its existing `#[cfg(test)]` module and three
-lines of `Cargo.toml`. No restructuring, no separate crate.
-
-**7 of 7 harnesses verify, 380s for the suite:**
-
-| Harness | Time |
+| `--solver` | Time |
 | --- | --- |
-| `starts_at_zero` | 12s |
-| `set_then_get_roundtrips` | 39s |
-| `add_from_msg_value_adds_exactly_the_value_sent` (symbolic `msg_value`) | 49s |
-| `increment_wraps_at_max` | 50s |
-| `add_number_can_decrease_the_counter` | 55s |
-| `add_number_is_exact_when_it_does_not_overflow` | 65s |
-| `mul_number_can_wrap` | 80s |
+| `cadical` (Kani's default) | 217s |
+| `kissat` | 194s |
+| `minisat` | 199s |
+| `z3`, `cvc5`, `bitwuzla` | unusable here |
 
-**The ordinary workflow is provably unaffected:**
+All three SAT backends land within noise of each other, so the instance is not
+sensitive to CDCL heuristics. The SMT backends are a tooling failure, not a
+disagreement: `z3` 4.8.10 cannot digest CBMC 6.8's SMT2 and CBMC exits with
+status 6, which Kani surfaces as `VERIFICATION:- FAILED`. **That is not a
+soundness signal** — worth knowing before someone reads it as one. `cvc5` and
+`bitwuzla` are not installed.
 
-| Command | Result |
-| --- | --- |
-| `cargo test` | passes — the template's own `test_counter` |
-| `cargo build --target wasm32-unknown-unknown --release` | 18.5 KB cdylib; `strings` shows no `kani` symbols and no `stylus-test` panic stub, and the real `vm_hooks` imports are intact |
-| `cargo stylus check` | compiles and sizes the contract at 6.0 KB. Its activation step needs a Stylus RPC (defaults to `localhost:8547`); against a devnode it reported a wasm data fee of 0.000071 ETH, and offline it stops after the size report |
-| `cargo kani --features proofs` | the 7 harnesses above |
+**What actually drives solve time is still unknown.** Remaining untested
+candidates: narrowing `U256` values to `u64` shapes, which shrinks the search
+space rather than the formula; the two-tier slot store.
 
-See [20-stylus.md](20-stylus.md#packaging-how-verification-attaches-to-a-real-contract)
-for why the feature gate is mandatory rather than stylistic.
+### Finding: memory, not time, is the binding constraint on mapping proofs
 
-**Three wrapping methods, not one.** Verifying the real template rather than a
-copy surfaced that `add_number`, `mul_number` *and* `increment` all wrap
-silently. The earlier hand-copied contract omitted `mul_number` and
-`add_from_msg_value` entirely — a good argument for pointing the tool at real
-code rather than a convenient subset.
+Measured 2026-09-09, and it cost an editor to learn. Two mapping proofs run
+**concurrently** from the VSCode integrated terminal exhausted a 23 GiB machine:
+one `cbmc` reached **6.4 GiB resident** and the global OOM killer shot it. Because
+terminal children inherit the editor's systemd scope, systemd tore down the whole
+`app-code-*.scope` — killing VSCode. Full journal excerpt and the
+`systemd-run --user` recipe that avoids it are in
+[40-toolchain.md](40-toolchain.md).
 
-### Finding: mappings are viable but an order of magnitude slower
+Consequences for planning:
 
-Measured 2026-09-08 on [`examples/vault`](../examples/vault), Kani 0.67.0,
-solver time only (the dependency-tree compile is shared and cached).
-
-**Scalar storage — seconds.**
-
-| Harness | Time |
-| --- | --- |
-| `counter::starts_at_zero` | 10s |
-| `counter::set_then_get_roundtrips` | 26s |
-| `counter::roundtrip_holds_for_any_transaction_context` | 32s |
-| `counter::add_number_is_exactly_wrapping` | 43s |
-| `counter::increment_wraps_at_max` | 44s |
-| `counter::add_number_can_decrease_the_counter` | 47s |
-| `vault::ownership_cannot_be_claimed_twice` | 46s |
-| `vault::owner_can_transfer_ownership` | 56s |
-| `counter::add_number_is_exact_when_it_does_not_overflow` | 57s |
-| `vault::only_owner_can_transfer_ownership` | 61s |
-
-**Mappings — minutes, scaling with the number of accesses.**
-
-| Harness | Mapping work | Time |
-| --- | --- | --- |
-| `vault::credit_then_read_roundtrips` | 1 account, 1 write | 181s |
-| `vault::credit_can_silently_wrap` | 1 account, 2 writes | 491s |
-| `vault::credit_checked_never_wraps` | 1 account, 2 guarded writes | 501s |
-| `vault::distinct_accounts_do_not_alias` | 2 accounts, 2 guarded writes | **1064s** |
-| `vault::total_tracks_the_sum_of_balances` | 2 accounts + conservation assertions | did not finish in 23 min |
-
-14 of 15 harnesses verify. Only the heaviest — two-account conservation — has
-not been seen to converge, and it was never given more than 23 minutes, so
-"slow" is established but "intractable" is not.
-
-**Three things follow.**
-
-1. **A full symbolic transaction context is nearly free** — 32s against 26s.
-   Use `SymbolicVM::new()` freely; `concrete_ctx()` is not the optimisation it
-   looks like.
-2. **Access control is cheap.** All three owner-gated proofs land under a
-   minute, because they touch only scalar slots. Proposal property #2 is
-   comfortably in reach.
-3. **Mapping cost tracks the number of accesses, not just their presence** —
-   181s for one write, ~500s for two, ~1064s for two accounts. That is roughly
-   quadratic-looking, which fits the diagnosis below.
-
-**Likely cause, not yet confirmed.** Mapping slot keys are *symbolic* `U256`
-digests, so `SlotStore`'s linear scan performs up to `SLOTS` symbolic 256-bit
-equality comparisons on *every* load and store; more accounts means both more
-scans and more entries to scan against. The counter's slots are small concrete
-numbers, where the same scan is trivial.
-
-Levers, cheapest first:
-
-1. Lower the default `SLOTS` from 16 — most single proofs touch a handful.
-2. Two-tier slot store: concrete scalar slots in a small direct-indexed array,
-   keccak-derived slots in a separate short list.
-3. Narrow balances to `u64`-shaped values where the property is not about the
-   256-bit boundary.
-4. Have the oracle return digests with a concrete discriminator in the high bits
-   so slot comparison can short-circuit. Weakens the model; needs care.
-
-**Confirm before optimising.** Vary `SLOTS` alone and measure — the same staged
-method that found the `TestVM` problem. This is the main open engineering
-question and it gates how large a target is realistic.
+- **Mapping proofs are effectively serial on a laptop**, regardless of core
+  count. Every timing in this file was measured one-at-a-time and none of them
+  parallelise.
+- Peak RSS for one mapping harness is **between 6.4 and 10 GiB** — the lower
+  bound from the OOM kill, the upper from all three lemmas later completing
+  under a `MemoryMax=10G` cap. It is not pinned more precisely than that: two
+  attempts to measure it failed, because `/usr/bin/time -v` wrapped
+  `systemd-run` rather than `cbmc` (reporting 7.4 MB, the wrapper's own
+  footprint) and systemd's own `Memory peak` reported 328 K for the same reason.
+  Poll `/proc/<cbmc-pid>/status` if the exact figure is ever needed.
+- `systemd-run --wait` sends unit stdout to **the journal**, not the terminal.
+  Read verdicts with `journalctl --user -u kani-<harness>`.
 
 ### Superseded: the regex hypothesis
 
