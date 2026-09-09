@@ -15,6 +15,39 @@ Targets: `wasm32-unknown-unknown` is installed for 1.91.0.
 
 ## Gotchas
 
+**Mapping proofs need gigabytes, and an OOM can take your editor with it.**
+Measured 2026-09-09: a single `cbmc` process on `vault::transfer_conserves_total`
+reached **6.4 GiB resident** (7.0 GiB virtual). Two such proofs launched
+concurrently from the VSCode integrated terminal exhausted a 23 GiB machine
+(with only 979 MiB of swap). The global OOM killer shot one `cbmc` — and because
+terminal children inherit the editor's systemd scope
+(`app-code-*.scope`), systemd tore down **the whole scope**, killing VSCode:
+
+```
+Out of memory: Killed process 140836 (cbmc) total-vm:7053452kB, anon-rss:6710888kB
+task_memcg=/user.slice/.../app.slice/app-code-5062.scope, task=cbmc
+app-code-5062.scope: Failed with result 'oom-kill'
+```
+
+Two consequences:
+
+- **Memory, not time, is the binding constraint on mapping proofs.** They are
+  effectively serial on a laptop regardless of core count. The timings in
+  [50-feasibility.md](50-feasibility.md) were all measured one-at-a-time; do not
+  assume they parallelise.
+- **Run long proofs in their own systemd scope**, so a cgroup OOM kills only the
+  proof:
+
+  ```bash
+  systemd-run --user --wait --collect --unit=kani-<harness> \
+      --property=MemoryMax=10G --property=MemorySwapMax=0 \
+      --working-directory="$PWD" \
+      -- cargo kani --features proofs -Z stubbing --harness <harness>
+  ```
+
+  A transient unit is a *sibling* of the editor's scope, not a child. Add
+  `/usr/bin/time -v` around it to capture peak RSS.
+
 **`rust-toolchain.toml` vs. Kani — resolved, not a problem.** Kani drives its own
 bundled nightly, and it was suspected that a crate pinning a toolchain (as
 `counter` pins 1.91.0 for the wasm target) would fight `cargo kani`. Tested

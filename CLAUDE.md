@@ -46,4 +46,9 @@ These are measured, not guessed — see [kb/50-feasibility.md](kb/50-feasibility
 - **Locate cost cliffs with staged harnesses**, adding one layer at a time.
   Reading dependency trees to guess at the bottleneck produced two wrong
   diagnoses before a five-harness ladder found the real one in minutes.
+- **Never run two mapping proofs concurrently.** One `cbmc` on a mapping proof
+  reached 6.4 GiB resident; two at once OOM-killed the machine and, because
+  terminal children share the editor's systemd scope, took VSCode down with it.
+  Run them one at a time inside `systemd-run --user --scope
+  --property=MemoryMax=10G` — see [kb/40-toolchain.md](kb/40-toolchain.md).
 - Prefer `--output-format terse`; the default buries results in warnings.
