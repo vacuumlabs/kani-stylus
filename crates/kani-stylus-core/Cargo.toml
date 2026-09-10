@@ -13,3 +13,10 @@ alloy-primitives = { version = "1.5.7", default-features = false }
 # `stylus-test` is what makes the generic `From<&H>` impl exist and makes `VM`
 # hold a `Box<dyn Host>`. We never construct a `TestVM` — it cannot be verified.
 stylus-sdk = { version = "0.10.9", default-features = false, features = ["stylus-test"] }
+
+# `cargo kani` injects `--cfg=kani`, so the `#[cfg(kani)]` proof modules are
+# invisible to a plain `cargo build`/`cargo test` and rustc's `unexpected_cfgs`
+# lint flags them. Declaring the cfg here silences that without disabling the
+# lint for genuine typos.
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)'] }

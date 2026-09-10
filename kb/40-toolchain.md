@@ -55,6 +55,24 @@ bundled nightly, and it was suspected that a crate pinning a toolchain (as
 `examples/counter` with its pin in place. Don't restructure a project to
 avoid this.
 
+**`cfg(kani)` warns under `cargo build`/`cargo test` unless declared.** The
+proof modules sit behind `#[cfg(kani)]`, and that cfg is injected only by
+`cargo kani`. To every other cargo invocation `kani` is an unknown cfg name, so
+rustc's `unexpected_cfgs` lint (on by default since Rust 1.80) fires once per
+site — 2 warnings in each example, 9 in `kani-stylus-core`. It is a lint about
+the cfg *name*, not about the code: nothing is misconfigured and the proofs are
+unaffected. Fixed 2026-09-10 by declaring the cfg in each package's
+`Cargo.toml`:
+
+```toml
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)'] }
+```
+
+Declare rather than `allow`: unknown *other* cfg names still warn. The examples
+are excluded from the workspace, so they each need their own copy — a
+`[workspace.lints]` entry would not reach them.
+
 **Kani cannot target wasm.** Verification runs natively (x86_64), against
 `--features stylus-test`. We are proving properties of the *Rust source*, not of
 the deployed WASM bytecode. This is a real, stateable limitation: it does not

@@ -44,3 +44,10 @@ panic = "abort"
 # If you need to reduce the binary size, it is advisable to try other
 # optimization levels, such as "s" and "z"
 opt-level = 3
+
+# `cargo kani` injects `--cfg=kani`, so the `#[cfg(kani)]` proof modules are
+# invisible to a plain `cargo build`/`cargo test` and rustc's `unexpected_cfgs`
+# lint flags them. Declaring the cfg here silences that without disabling the
+# lint for genuine typos.
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)'] }
