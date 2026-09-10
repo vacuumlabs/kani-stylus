@@ -565,6 +565,74 @@ Consequences for planning:
 - `systemd-run --wait` sends unit stdout to **the journal**, not the terminal.
   Read verdicts with `journalctl --user -u kani-<harness>`.
 
+### Result: word-based memo table — the one optimisation that worked (2026-09-10)
+
+Five hypotheses were tested for mapping-proof solve time. Four were dead ends
+(recorded above: `SLOTS`, `MAX_HASHES`, digest width, solver choice, all <=10%).
+The winner was the one deferred as "a bigger refactor".
+
+**The change.** `HashOracle` stored preimages as `[[u8; 64]; MAX_HASHES]`, so
+each `hash()` call did up to 64 writes into `preimages[n][k]` with a
+path-dependent `n` — symbolic array indexing — and `prefix_eq` compared
+byte-wise against every entry already in the table. It now packs each preimage
+into two 256-bit words (`to_words`), stored and compared as two word equalities.
+
+**Model-neutral.** Same injective-function semantics, same determinism and
+distinctness assumptions, same 2^256 digest domain. Check counts went slightly
+*up* (1452 vs 1448 etc.) and the `kani::cover` properties still pass, so
+nothing is proved less thoroughly. Cost: `MAX_PREIMAGE` is now pinned at 64 by
+the two-word packing — raising it needs a third word.
+
+**Effect scales with the number of distinct hashes**, because the old cost was
+quadratic in table entries:
+
+| Harness | Accounts | Before | After | Change |
+| --- | --- | --- | --- | --- |
+| `l4_mapping_read_concrete_key` (single access) | 1 | 27.4s | 28.4s | none |
+| `credit_then_read_roundtrips` | 1 | 199.8s | 142.5s | -29% |
+| `credit_checked_moves_total_by_the_same_delta` | 1 | 463s | 236s | -49% |
+| `distinct_accounts_do_not_alias` | 2 | 1236s | 478s | -61% |
+| `transfer_conserves_total` | 2 | 1836s | 495s | -73% |
+| `transfer_does_not_move_any_other_balance` | 3 | 1904s | 359s | -81% |
+
+Single-access harnesses show **nothing** — with one entry there is nothing to
+compare against. This is why the cost ladder missed it: every rung does exactly
+one access, so the ladder was structurally blind to the win it was built to find.
+It correctly localised the mapping machinery (+19.1s over a scalar read, with a
+*concrete* key) and correctly killed the symbolic-key hypothesis (+1.6s, 6%) —
+but the effect only appears with two or more accesses.
+
+### Result: 17 of 17 harnesses verify (2026-09-10)
+
+Clean full-suite run on the real tree, **one cgroup per harness**, word-based
+oracle, idle machine.
+
+| Suite | Harnesses | Total |
+| --- | --- | --- |
+| `examples/counter` | 7 | 313s |
+| `examples/vault` | 10 | 2424s |
+| **Total** | **17** | **2737s (46 min)** |
+
+The equivalent 17 harnesses before this work would have taken **~7521s
+(125 min)**. The original 7 vault harnesses went 2938s -> 1334s (-55%); the three
+conservation lemmas 4203s -> 1090s (-74%). The counter suite (380s -> 313s) has
+no mappings and so is unaffected by the oracle change — treat that delta as
+run-to-run variation, not an improvement.
+
+**Gotcha found while measuring: `--harness` is a SUBSTRING filter.**
+`--harness owner_can_transfer_ownership` also runs
+`only_owner_can_transfer_ownership`. Use `--exact` with the fully qualified name
+(`--exact --harness proofs::owner_can_transfer_ownership`) for a single
+harness, or per-harness timings silently include their neighbours. Only that one
+pair collides in the current suites; every other recorded timing is unaffected.
+The clean figure for that harness is 70.1s.
+
+**Measurement hygiene, learned the hard way.** Repeated runs of identical code
+on an idle machine agree to a few percent (206/197/197s, and 113/112/112s). The
+same config measured *while other work runs* came out at 259s against a true
+200s — a 30% inflation. Never compare timings across runs with different
+background load; re-measure the baseline in the same session.
+
 ### Superseded: the regex hypothesis
 
 An earlier reading of this file blamed the `lazy_static` `Regex`es in

@@ -211,26 +211,33 @@ slots you touch, not by how much contract code runs. Measured on the examples
 
 | Harness | Mapping work | Time |
 | --- | --- | --- |
-| `vault::credit_then_read_roundtrips` | 1 account, 1 write | 238s |
-| `vault::credit_can_silently_wrap` | 1 account, 2 writes | 561s |
-| `vault::credit_checked_never_wraps` | 1 account, 2 guarded writes | 675s |
-| `vault::distinct_accounts_do_not_alias` | 2 accounts, 2 guarded writes | 1236s |
-| `vault::credit_checked_moves_total_by_the_same_delta` | 1 account, delta + frame | 463s |
-| `vault::transfer_conserves_total` | 2 accounts, delta + frame | 1836s |
-| `vault::transfer_does_not_move_any_other_balance` | 3 accounts, symbolic frame | 1904s |
+| `vault::credit_then_read_roundtrips` | 1 account, 1 write | 142s |
+| `vault::credit_can_silently_wrap` | 1 account, 2 writes | 257s |
+| `vault::credit_checked_never_wraps` | 1 account, 2 guarded writes | 270s |
+| `vault::credit_checked_moves_total_by_the_same_delta` | 1 account, delta + frame | 236s |
+| `vault::transfer_does_not_move_any_other_balance` | 3 accounts, symbolic frame | 359s |
+| `vault::distinct_accounts_do_not_alias` | 2 accounts, 2 guarded writes | 478s |
+| `vault::transfer_conserves_total` | 2 accounts, delta + frame | 495s |
 
-Half an hour per harness is the practical ceiling today, and the **binding
-constraint is memory, not time**: one `cbmc` on a mapping proof needs 6.4–10 GiB,
-so these proofs are effectively serial on a laptop regardless of core count. Run
-them one at a time — two at once OOM-killed a 23 GiB machine and took the editor
-with it, because terminal children share its systemd scope. The
-`systemd-run --user` recipe that avoids this is in
+Under ten minutes per harness, and the full 17-harness suite across both
+examples runs in **46 minutes** (was ~125). Most of that came from storing the
+keccak oracle's memo table as 256-bit words rather than byte arrays — the win
+scales with the number of distinct hashes, up to -81% on the three-account
+lemma. Four other candidates (`SLOTS`, `MAX_HASHES`, digest width, solver
+choice) were each worth <=10%; see
+[`kb/50-feasibility.md`](../../kb/50-feasibility.md).
+
+The **binding constraint is memory, not time**: one `cbmc` on a mapping proof
+needs several GiB, so these proofs are effectively serial on a laptop
+regardless of core count. Run them one at a time, one cgroup each — two at once
+OOM-killed a 23 GiB machine and took the editor with it, because terminal
+children share its systemd scope. The `systemd-run --user` recipe is in
 [`kb/40-toolchain.md`](../../kb/40-toolchain.md).
 
-Note the last row: adding a *third* symbolic account for the strong frame
-condition cost only 68s over the two-account version — the marginal account is
-much cheaper than the first one. See
-[`kb/50-feasibility.md`](../../kb/50-feasibility.md).
+Two measurement notes: `--harness` is a **substring** filter, so use `--exact`
+with the fully qualified name for a single harness; and never compare timings
+across runs with different background load — the same config measured 200s idle
+and 259s under contention.
 
 In rough order of what to reach for when something is slow:
 

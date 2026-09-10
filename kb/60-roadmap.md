@@ -11,10 +11,12 @@ measurement moves. Numbered open questions referenced below are that file's.
 
 ## The one-line summary
 
-Today kani-stylus is usable by its authors on scalar-storage properties and, as
-of 2026-09-09, on conservation properties over mappings — at roughly half an
-hour per harness. It is not yet usable by anyone else on anything. Everything
-below is ordered by what it takes to change that sentence.
+Today kani-stylus is usable by its authors on scalar-storage properties and on
+conservation properties over mappings, at **under ten minutes per harness** —
+the full 17-harness suite runs in 46 minutes. It is not yet usable by anyone
+else on anything: there is no walkthrough, no reusable property library, and
+nothing has been verified that we did not write ourselves. Everything below is
+ordered by what it takes to change that second sentence.
 
 ## Now (days) — close out the MVP
 
@@ -42,21 +44,17 @@ and its reach.
        sequences left as a disclosed hand argument. New API:
        `vm.snapshot()` / `vm.slots_changed_since()`. See
        [50-feasibility.md](50-feasibility.md).
-1. [ ] **Make mapping proofs cheap.** *Q8 — no longer a blocker, still the
-       biggest quality-of-life win.* Conservation lemmas land in 463–1836s each,
-       so the work is *possible*; a 30-minute iteration loop just makes it
-       miserable, and memory (6.4 GiB per `cbmc`) caps how far it scales.
-       **The `SlotStore`-scan diagnosis was tested on 2026-09-09 and is wrong
-       about time.** Varying `SLOTS` 2→16 changes the formula 2.5x and leaves
-       solve time flat. `SLOTS`, `MAX_HASHES` and digest width are all *size*
-       levers; size governs memory and encodability, not speed. **What drives
-       solve time is currently unknown** — that is the real open question.
-       Untested, in order: alternative `--solver` backends; narrowing `U256` to
-       `u64` shapes (shrinks the search space, not just the formula); the
-       two-tier slot store. Rank these by **real solves only** — formula size
-       was tried as a fast proxy and is invalid for this workload.
-       *Done when:* something reproducibly halves a mapping harness's solve
-       time, or the search is called off and the ceiling documented.
+1. [x] ~~**Make mapping proofs cheap.**~~ — **Largely done 2026-09-10.** The
+       17-harness suite went from ~125 min to **46 min**, and the worst harness
+       from 1904s to 359s, by storing the keccak oracle's memo table as 256-bit
+       words instead of byte arrays. Model-neutral. Four other candidates were
+       each worth <=10%. Remaining if more is ever needed: the two-tier slot
+       store, and narrowing balances to `u64` shapes (untested). Memory, not
+       time, is now clearly the binding constraint.
+       Two lessons worth keeping from getting there: `SLOTS`, `MAX_HASHES` and
+       digest width are *size* levers, and size governs memory and encodability
+       rather than speed — so rank time work by **real solves only**, never by
+       formula size, which was tried as a fast proxy and is invalid here.
 2. [ ] **Properties over sequences of calls.** *Closes Q9.*
        Every harness today proves one method call from a hand-havoc'd state, but
        "no sequence of calls breaks this" is the property contract authors

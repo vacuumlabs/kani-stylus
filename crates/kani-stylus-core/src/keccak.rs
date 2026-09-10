@@ -64,9 +64,18 @@ use alloy_primitives::{B256, U256};
 ///
 /// 64 bytes covers the shapes that matter: `keccak256(key ‖ slot)` for a
 /// mapping entry and `keccak256(slot)` for a dynamic array base.
+///
+/// **Not freely tunable.** [`to_words`] packs a preimage into exactly two
+/// 256-bit words, so raising this needs a third word rather than a bigger
+/// constant. That packing is what makes multi-account proofs affordable — see
+/// the memo-table note on [`to_words`].
 pub const MAX_PREIMAGE: usize = 64;
 
 /// Distinct preimages one proof may hash. Repeats are free — they hit the memo.
+///
+/// Measured 2026-09-09: lowering this barely affects cost (~1%), because the
+/// scan loops run to the number of hashes actually taken, not to the bound.
+/// Leave it generous.
 pub const MAX_HASHES: usize = 8;
 
 /// Digests are constrained to be at least this large when read as a slot index,
@@ -77,7 +86,8 @@ pub const MIN_DIGEST_SLOT: u64 = 1 << 32;
 
 /// Bounded memo table implementing the injective-function model.
 pub struct HashOracle {
-    preimages: [[u8; MAX_PREIMAGE]; MAX_HASHES],
+    pre_hi: [U256; MAX_HASHES],
+    pre_lo: [U256; MAX_HASHES],
     lens: [usize; MAX_HASHES],
     digests: [B256; MAX_HASHES],
     len: usize,
@@ -86,7 +96,8 @@ pub struct HashOracle {
 impl HashOracle {
     pub const fn new() -> Self {
         Self {
-            preimages: [[0u8; MAX_PREIMAGE]; MAX_HASHES],
+            pre_hi: [U256::ZERO; MAX_HASHES],
+            pre_lo: [U256::ZERO; MAX_HASHES],
             lens: [0usize; MAX_HASHES],
             digests: [B256::ZERO; MAX_HASHES],
             len: 0,
@@ -104,10 +115,12 @@ impl HashOracle {
         // truncating oracle would break injectivity and could mask a real bug.
         kani::assume(input.len() <= MAX_PREIMAGE);
 
+        let (hi, lo) = to_words(input);
+
         // Determinism: an already-seen preimage returns its recorded digest.
         let mut i = 0;
         while i < self.len {
-            if self.lens[i] == input.len() && prefix_eq(&self.preimages[i], input) {
+            if self.lens[i] == input.len() && self.pre_hi[i] == hi && self.pre_lo[i] == lo {
                 return self.digests[i];
             }
             i += 1;
@@ -127,11 +140,8 @@ impl HashOracle {
         // Prune paths that would exceed the table rather than overwrite.
         kani::assume(self.len < MAX_HASHES);
         let n = self.len;
-        let mut k = 0;
-        while k < input.len() {
-            self.preimages[n][k] = input[k];
-            k += 1;
-        }
+        self.pre_hi[n] = hi;
+        self.pre_lo[n] = lo;
         self.lens[n] = input.len();
         self.digests[n] = digest;
         self.len = n + 1;
@@ -179,18 +189,23 @@ pub fn hashes_taken() -> usize {
     with_oracle(|o| o.distinct_hashes())
 }
 
-/// Compare the first `input.len()` bytes of a fixed buffer against a slice.
+/// Pack a preimage of up to [`MAX_PREIMAGE`] bytes into two 256-bit words.
 ///
-/// An explicit loop, not `&buf[..n] == input`: slice equality goes through
-/// `memcmp`, which drags SIMD comparison code into the goto program for no
-/// benefit at these sizes.
-fn prefix_eq(buf: &[u8; MAX_PREIMAGE], input: &[u8]) -> bool {
+/// The writes here land in *local* fixed arrays at concrete indices, so they
+/// cost nothing structurally. The point is what it avoids: storing preimages
+/// byte-wise meant 64 writes into `preimages[n][k]` with a path-dependent `n`
+/// -- symbolic array indexing -- and a byte-wise compare against every entry.
+fn to_words(input: &[u8]) -> (U256, U256) {
+    let mut hi = [0u8; 32];
+    let mut lo = [0u8; 32];
     let mut i = 0;
-    while i < input.len() {
-        if buf[i] != input[i] {
-            return false;
-        }
+    while i < input.len() && i < 32 {
+        hi[i] = input[i];
         i += 1;
     }
-    true
+    while i < input.len() && i < MAX_PREIMAGE {
+        lo[i - 32] = input[i];
+        i += 1;
+    }
+    (U256::from_be_bytes(hi), U256::from_be_bytes(lo))
 }
