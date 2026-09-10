@@ -73,6 +73,40 @@ Declare rather than `allow`: unknown *other* cfg names still warn. The examples
 are excluded from the workspace, so they each need their own copy — a
 `[workspace.lints]` entry would not reach them.
 
+**The template's bin target collides with the cdylib, and can leave an empty
+wasm at the path you deploy.** Verified 2026-09-10. `cargo stylus new` gives you
+both a `[lib]` with `crate-type = ["lib", "cdylib"]` and a `src/main.rs` (there
+only so `cargo stylus export-abi` has a `main` to run). Both are named after the
+package, so `cargo build --target wasm32-unknown-unknown --release` warns twice
+about an "output filename collision" over
+`target/wasm32-unknown-unknown/release/<name>.wasm` — and the collision is not
+cosmetic. The bin compiles to a **109-byte** module with no `user_entrypoint`;
+whichever target is written last wins the path. We observed the stub sitting
+there in place of the real 18.5 KB contract.
+
+`cargo stylus check`/`deploy`/`verify` are immune on two counts: `stylus-tools`
+builds with `cargo build --lib --locked --release` and reads
+`.../release/deps/<name>.wasm`, where the cdylib keeps the plain name and the bin
+gets a hash suffix. The hazard is anything reading the *top-level* path — a hand
+written deploy step, a CI job, `cargo stylus check --wasm-file`.
+
+Fixed by renaming the bin in each example's `Cargo.toml`:
+
+```toml
+[[bin]]
+name = "<name>-abi"
+path = "src/main.rs"
+```
+
+`cargo stylus export-abi` still works: it runs `cargo run --package <name>
+--features export-abi` without naming a bin, and there is still exactly one.
+
+**Do not reach for `required-features = ["export-abi"]` here**, the otherwise
+idiomatic fix. It satisfies cargo but breaks verification: `cargo kani` builds
+all targets and dies on a bin filtered out by features —
+`error: target `counter` in package `counter` requires the features:
+`export-abi``. Measured 2026-09-10.
+
 **Kani cannot target wasm.** Verification runs natively (x86_64), against
 `--features stylus-test`. We are proving properties of the *Rust source*, not of
 the deployed WASM bytecode. This is a real, stateable limitation: it does not

@@ -21,6 +21,17 @@ stylus-sdk = { version = "0.10.9", features = ["stylus-test"] }
 [lib]
 crate-type = ["lib", "cdylib"]
 
+# `src/main.rs` exists only so `cargo stylus export-abi` has a `main` to run,
+# but cargo builds it for wasm too, where the default bin name collides with
+# the cdylib over `target/wasm32-unknown-unknown/release/vault.wasm` -- and the
+# 109-byte stub bin can win, leaving an empty module at the path a deploy
+# script would read. Renaming the bin separates the two artifacts. Gating it on
+# `required-features = ["export-abi"]` would also work for cargo, but makes
+# `cargo kani` fail: it builds all targets and errors on a filtered-out bin.
+[[bin]]
+name = "vault-abi"
+path = "src/main.rs"
+
 [features]
 default = ["mini-alloc"]
 export-abi = ["stylus-sdk/export-abi"]
