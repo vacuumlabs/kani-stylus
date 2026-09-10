@@ -10,16 +10,13 @@ together: give a Stylus contract a symbolic host environment, then prove things
 like "transfers conserve total supply" and "only the owner can call this"
 instead of testing them one input at a time.
 
-**Status: working.** [`crates/kani-stylus-core`](crates/kani-stylus-core/) gives
+[`crates/kani-stylus-core`](crates/kani-stylus-core/) gives
 your contract a symbolic ArbOS host, and it drops into an ordinary
-`cargo stylus new` project — [`examples/counter`](examples/counter/)
-is exactly that, with proofs added alongside its unit tests and `cargo test`,
+`cargo stylus new` project — see [`examples/counter`](examples/counter/), 
+with proofs added alongside its unit tests and `cargo test`,
 `cargo build` and `cargo stylus check` all unaffected. It finds real bugs: that
 stock template has a silent `U256` overflow, and Kani produces the exact
 witness.
-
-[`proposal.md`](proposal.md) is the original pitch; parts of it are superseded
-by what the code turned out to need — see [`kb/50-feasibility.md`](kb/50-feasibility.md).
 
 ## Getting started
 
@@ -48,7 +45,7 @@ Versions this repo has been exercised against are in [`kb/40-toolchain.md`](kb/4
 cd examples/counter
 cargo test                                            # unit tests
 cargo build --target wasm32-unknown-unknown --release # build the wasm
-cargo stylus check                                    # would it activate on-chain?
+cargo stylus check                                    # would it activate on-chain? (you need to have your nitro devnode running for this, see https://docs.arbitrum.io/stylus/quickstart for instructions)
 ```
 
 ### 3. Run the proofs

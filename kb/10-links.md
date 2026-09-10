@@ -37,6 +37,7 @@ append `.md` to any docs path to get raw Markdown instead of rendered HTML.
 - [Gas and ink costs](https://docs.arbitrum.io/stylus/reference/opcode-hostio-pricing)
 - [Debugging Stylus transactions](https://docs.arbitrum.io/stylus/cli-tools/debugging-tx)
 - [Common issues and solutions](https://docs.arbitrum.io/stylus/troubleshooting/common-issues)
+- [OffchainLabs/nitro-devnode](https://github.com/OffchainLabs/nitro-devnode) — the local dev node `cargo stylus check` wants on `localhost:8547`; `./run-dev-node.sh`, checked 2026-09-10
 
 ### Source and examples
 - [OffchainLabs/stylus-sdk-rs](https://github.com/OffchainLabs/stylus-sdk-rs) — SDK source; read `stylus-core/src/host.rs` first
