@@ -2315,6 +2315,7 @@ name = "kani-stylus-core"
 version = "0.1.0"
 dependencies = [
  "alloy-primitives",
+ "ruint",
  "stylus-sdk",
 ]
 
