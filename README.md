@@ -97,6 +97,9 @@ values.
 [`examples/vault`](examples/vault/) covers what a counter can't: mappings and
 owner-gated access control.
 
+[`examples/vesting`](examples/vesting/) adds time and integer division. Work in
+progress.
+
 ### 4. Learn the two halves
 
 **Stylus** — start with the [gentle introduction](https://docs.arbitrum.io/stylus/gentle-introduction)
@@ -145,6 +148,7 @@ crates/
 examples/          each one a real, deployable `cargo stylus new` project
   counter/         storage, arithmetic, payable methods
   vault/           access control and mappings
+  vesting/         time and integer division (WIP)
 ```
 
 ## License
