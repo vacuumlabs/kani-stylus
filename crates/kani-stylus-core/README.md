@@ -118,6 +118,29 @@ The stub models keccak256 as an **uninterpreted injective function**: the same
 preimage always gives the same digest, distinct preimages always give distinct
 digests, and nothing else is assumed. The solver never sees a round of keccak.
 
+## Nonlinear arithmetic: `arith` and `arith_oracle`
+
+A symbolic `U256` division does not verify as ruint implements it, and even
+modelled exactly, facts like "`x * y / z` grows with `y`" are beyond a SAT
+solver at 256 bits. Two stub families, for two jobs:
+
+- **`arith`** models division exactly. Counterexamples are real, so use it to
+  demonstrate bugs and in every `#[kani::should_panic]` harness.
+- **`arith_oracle`** replaces `*` and `/` with uninterpreted functions
+  constrained by lemmas (monotonicity, `x * y / y == x`, …), each checked
+  against real ruint by `cargo test`. Proofs become cheap; a failure may be
+  spurious, so replay it on real arithmetic.
+
+```rust
+#[kani::proof]
+#[kani::stub(ruint::Uint::wrapping_mul, kani_stylus_core::arith_oracle::mul_stub)]
+#[kani::stub(ruint::Uint::wrapping_div, kani_stylus_core::arith_oracle::div_stub)]
+fn vested_is_monotone_in_time() { /* ... */ }
+```
+
+Why, what each assumes, and how Certora and hevm do the same:
+[`kb/35-arithmetic-oracle.md`](../../kb/35-arithmetic-oracle.md).
+
 ## Conservation properties: prove them by local deltas
 
 The property everyone wants from a token is `total == sum of every balance`.

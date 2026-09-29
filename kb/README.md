@@ -10,6 +10,7 @@ Read these in order when picking up the project cold:
 | [10-links.md](10-links.md) | Canonical upstream docs — every URL here was checked for a 200 |
 | [20-stylus.md](20-stylus.md) | How Stylus contracts and the ArbOS host interface actually work |
 | [30-kani.md](30-kani.md) | What Kani can and can't verify, and how it's driven |
+| [35-arithmetic-oracle.md](35-arithmetic-oracle.md) | Why `U256` `*` and `/` defeat SAT; exact division vs. the lemma-based oracle, and when to use which |
 | [40-toolchain.md](40-toolchain.md) | Local versions, environment gotchas |
 | [50-feasibility.md](50-feasibility.md) | Proposal claims vs. what the source says; open questions |
 | [60-roadmap.md](60-roadmap.md) | What's next and in what order; why it differs from the proposal |
