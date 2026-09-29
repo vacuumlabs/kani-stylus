@@ -10,6 +10,10 @@ categories = ["development-tools::testing", "cryptography::cryptocurrencies"]
 
 [dependencies]
 alloy-primitives = { version = "1.5.7", default-features = false }
+# `alloy` re-exports only ruint's `uint!` macro, not `Uint` itself, so the
+# division stubs in `arith` need it directly. Already in the tree via alloy, so
+# this adds no transitive weight.
+ruint = { version = "1.16", default-features = false }
 # `stylus-test` is what makes the generic `From<&H>` impl exist and makes `VM`
 # hold a `Box<dyn Host>`. We never construct a `TestVM` — it cannot be verified.
 stylus-sdk = { version = "0.10.9", default-features = false, features = ["stylus-test"] }

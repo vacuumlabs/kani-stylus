@@ -91,6 +91,8 @@
 extern crate alloc;
 
 #[cfg(kani)]
+pub mod arith;
+#[cfg(kani)]
 pub mod context;
 #[cfg(kani)]
 pub mod host;
@@ -99,6 +101,11 @@ pub mod keccak;
 #[cfg(kani)]
 pub mod storage;
 
+#[cfg(kani)]
+pub use arith::{
+    any_uint, div_rem_memo, div_rem_monotone, div_rem_spec, split, ueq, ult, widen,
+    wrapping_div_stub, wrapping_div_stub_memo, wrapping_div_stub_monotone, MAX_DIVS,
+};
 #[cfg(kani)]
 pub use context::{any_address, any_u256, Context};
 #[cfg(kani)]

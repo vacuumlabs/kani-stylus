@@ -60,10 +60,12 @@ impl<const SLOTS: usize> SlotStore<SLOTS> {
             }
             i += 1;
         }
-        // Prune paths that would exceed the bound rather than overwrite one.
-        // A proof that needs more slots should raise `SLOTS`, not silently
-        // verify a smaller contract than the one written.
-        kani::assume(self.len < SLOTS);
+        // A proof that needs more slots than `SLOTS` is verifying a smaller contract
+        // than the one written, so fail loudly rather than quietly dropping the path.
+        if self.len >= SLOTS {
+            panic!("SlotStore: more than SLOTS distinct slots written -- raise SLOTS");
+        }
+
         self.keys[self.len] = key;
         self.vals[self.len] = value;
         self.len += 1;

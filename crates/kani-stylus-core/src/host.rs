@@ -89,6 +89,28 @@ impl<const SLOTS: usize> SymbolicVm<SLOTS> {
         self
     }
 
+    /// A second handle on the *same storage*, at a later clock.
+    ///
+    /// Unlike the builders above this borrows rather than consuming, because
+    /// both handles stay live: the `Rc` is shared, so writes made through the
+    /// old one are visible through the new one. That is what lets a proof
+    /// advance the block timestamp between calls — `Context` is a plain `Copy`
+    /// field, so `From<&H>` hands each contract its own copy and a later
+    /// mutation would not be seen.
+    ///
+    /// ```ignore
+    /// let mut v1 = Contract::from(&vm);
+    /// v1.claim();                       // at vm's timestamp
+    /// let vm2 = vm.with_timestamp(t2);
+    /// let mut v2 = Contract::from(&vm2);
+    /// v2.claim();                       // sees v1's writes, at t2
+    /// ```
+    pub fn with_timestamp(&self, block_timestamp: u64) -> Self {
+        let mut ctx = self.ctx;
+        ctx.block_timestamp = block_timestamp;
+        Self { state: self.state.clone(), ctx }
+    }
+
     pub fn context(&self) -> Context {
         self.ctx
     }
