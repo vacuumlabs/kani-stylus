@@ -59,6 +59,9 @@
 //!
 //! Modelled: persistent storage (bounded), keccak256 (as an uninterpreted
 //! injective function — see [`keccak`]), `msg`/`block`/`chain` context.
+//! Optionally, `U256` division exactly by its specification ([`arith`]), or
+//! `*` and `/` as uninterpreted functions constrained by lemmas
+//! ([`arith_oracle`]).
 //!
 //! Not modelled, and a proof reaching one of these **fails loudly** rather than
 //! inventing an answer: cross-contract calls, `CREATE`/`CREATE2`, gas
@@ -92,6 +95,11 @@ extern crate alloc;
 
 #[cfg(kani)]
 pub mod arith;
+// The one exception: `arith_oracle`'s lemmas are plain predicates, and
+// `cargo test` checks them against real ruint arithmetic. Only its stubs need
+// Kani.
+#[cfg(any(kani, test))]
+pub mod arith_oracle;
 #[cfg(kani)]
 pub mod context;
 #[cfg(kani)]
