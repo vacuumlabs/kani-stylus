@@ -68,3 +68,16 @@ append `.md` to any docs path to get raw Markdown instead of rendered HTML.
 - Experimental: [Function contracts](https://model-checking.github.io/kani/reference/experimental/contracts.html) · [Loop contracts](https://model-checking.github.io/kani/reference/experimental/loop-contracts.html) · [Concrete playback](https://model-checking.github.io/kani/reference/experimental/concrete-playback.html)
 - [model-checking/kani](https://github.com/model-checking/kani) — source and issue tracker
 - [kani-verifier on docs.rs](https://docs.rs/kani-verifier/)
+
+## Nonlinear arithmetic in other verifiers
+
+Checked for a 200 on 2026-09-29. Discussed in
+[35-arithmetic-oracle.md](35-arithmetic-oracle.md).
+
+- [Hozzová et al., *Overapproximation of Non-Linear Integer Arithmetic for Smart Contract Verification*, LPAR 2023](https://easychair.org/publications/paper/BlrQ) — Certora's uninterpreted `*`/`div` plus instantiated axioms
+- [Certora: dealing with nonlinear arithmetic](https://docs.certora.com/en/latest/docs/user-guide/out-of-resources/timeout.html#dealing-with-nonlinear-arithmetic) · [CVL ghosts and axioms](https://docs.certora.com/en/latest/docs/cvl/ghosts.html)
+- [hevm PR #1075, `--abstract-arith`](https://github.com/argotorg/hevm/pull/1075) — uninterpreted `bvmul`/`bvudiv` with a lemma catalogue, refined before reporting
+- [Halmos `sevm.py`](https://github.com/a16z/halmos/blob/main/src/halmos/sevm.py) · [`counterexample-invalid` warning](https://github.com/a16z/halmos/wiki/warnings)
+- [Niemetz, Preiner, Zohar, *Scalable Bit-Blasting with Abstractions*, CAV 2024](https://bitwuzla.github.io/data/NiemetzPZ-CAV24.pdf) — Bitwuzla's solver-level abstraction
+- [Bryant et al., *Deciding Bit-Vector Arithmetic with Abstraction*, TACAS 2007](https://people.eecs.berkeley.edu/~sseshia/pubdir/uclid-tacas07.pdf)
+- [model-checking/kani#3112](https://github.com/model-checking/kani/issues/3112) — uninterpreted functions in Kani, open
