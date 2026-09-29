@@ -22,8 +22,11 @@
 //! There are no mappings here, so nothing hashes through
 //! `stylus_sdk::crypto::keccak` — but every harness that reaches the vesting
 //! formula replaces `ruint::Uint::wrapping_div`, because a single symbolic
-//! `U256` division is otherwise enough to make a proof diverge. See
-//! [`kani_stylus_core::arith`].
+//! `U256` division is otherwise enough to make a proof diverge. Two families of
+//! stub do it: [`kani_stylus_core::arith`] models division exactly, and is used
+//! wherever a counterexample must be real; [`kani_stylus_core::arith_oracle`]
+//! replaces `*` and `/` with lemma-constrained unknowns, and is what makes the
+//! monotonicity and bound proofs converge.
 //!
 //! The model is OpenZeppelin's `VestingWallet` shape — **one deployed instance
 //! is one entitlement**, not a registry of many.
@@ -575,37 +578,52 @@ mod proofs {
         assert!(a1 / b <= a2 / b, "division not monotone");
     }
 
-    // DOES NOT CONVERGE. Gated so it stays out of the default suite.
-    #[cfg(feature = "slow-proofs")]
+    /// The vested amount never goes backwards: for *every* pair of instants
+    /// `t1 <= t2`, before the start, during the schedule and after its end, with
+    /// every parameter symbolic and `total` up to 2^192, through the contract's
+    /// own storage.
+    ///
+    /// Bit-precise this does not converge -- it rests on `*` and `/` being
+    /// monotone, which a SAT solver would have to rediscover at 256 bits. With
+    /// `kani_stylus_core::arith_oracle` it follows from a few lemmas: both are
+    /// monotone, and `total * e / d <= total` while `e <= d`.
+    ///
+    /// The `cover` is the non-vacuity check, and it is deliberately confined
+    /// to the division branch: before the start and after the end no `*` or
+    /// `/` runs, so an increase there would say nothing about the oracle.
+    /// Satisfying it means that, under the oracle's lemmas, vesting can still
+    /// grow strictly mid-schedule -- the lemmas are consistent, and they have
+    /// not made the assertion trivially true.
     #[kani::proof]
-    #[kani::stub(ruint::Uint::wrapping_div, kani_stylus_core::wrapping_div_stub_monotone)]
-    #[kani::stub(ruint::Uint::overflowing_mul, crate::proofs::overflowing_mul_stub)]
+    #[kani::stub(ruint::Uint::wrapping_mul, kani_stylus_core::arith_oracle::mul_stub)]
+    #[kani::stub(ruint::Uint::wrapping_div, kani_stylus_core::arith_oracle::div_stub)]
     fn vested_is_monotone_in_time() {
-        // NOTE: currently does not converge sufficiently fast!
-        //let vm = SymbolicVm::<4>::concrete_ctx();
-        //let mut v = Vesting::from(&vm);
-        
-        let start: u64 = 100u64; //kani::any();
-        let duration: u64 = 1000u64; //kani::any();
+        let vm = SymbolicVm::<4>::concrete_ctx();
+        let mut v = Vesting::from(&vm);
+
+        let start: u64 = kani::any();
+        let duration: u64 = kani::any();
         kani::assume(duration > 0);
-        kani::assume(start.checked_add(duration).is_some());
+        kani::assume(start.checked_add(duration).is_some()); // defect 1 guard
+        let total = any_u256();
+        // Over-approximation of "DELIBERATE DEFECT 2 cannot fire here"; see
+        // `vested_never_exceeds_total`.
+        kani::assume(total <= U256::MAX >> 64);
 
-        let total = U256::from(10000u64); //any_u256();
-        //let total: u64 = kani::any();
-        //kani::assume(total.checked_mul(U256::from(duration)).is_some()); // no overflow assumption
-        kani::assume(total <= U256::MAX >> 64); // simplified no overflow assumption
-
-        //v.start.set(U64::from(start));
-        //v.duration.set(U64::from(duration));
-        //v.total.set(U256::from(total));
+        v.start.set(U64::from(start));
+        v.duration.set(U64::from(duration));
+        v.total.set(total);
 
         let t1: u64 = kani::any();
         let t2: u64 = kani::any();
-        kani::assume(start <= t1);
         kani::assume(t1 <= t2);
-        kani::assume(t2 <= start + duration);
-        //assert!(v.vested_amount(t1) <= v.vested_amount(t2), "monotonicity broken");
-        assert!(schedule(start, duration, total, t1) <= schedule(start, duration, total, t2), "monotonicity broken");
+
+        let (early, late) = (v.vested_amount(t1), v.vested_amount(t2));
+        assert!(early <= late, "monotonicity broken");
+        kani::cover!(
+            start < t1 && t2 < start + duration && early < late,
+            "vesting grows mid-schedule"
+        );
     }
 
     #[cfg(feature = "slow-proofs")]
@@ -646,10 +664,12 @@ mod proofs {
         assert!(schedule(start, duration, total, t1) <= schedule(start, duration, total, t2), "monotonicity broken");
     }
 
-    #[cfg(feature = "slow-proofs")]
+    /// It rests on `total * e / d <= total` for `e <= d`, a nonlinear fact:
+    /// with exact division this sat behind `slow-proofs`. It is one of
+    /// `arith_oracle`'s lemmas.
     #[kani::proof]
-    #[kani::stub(ruint::Uint::wrapping_div, kani_stylus_core::wrapping_div_stub)]
-    #[kani::stub(ruint::Uint::overflowing_mul, crate::proofs::overflowing_mul_stub)]
+    #[kani::stub(ruint::Uint::wrapping_mul, kani_stylus_core::arith_oracle::mul_stub)]
+    #[kani::stub(ruint::Uint::wrapping_div, kani_stylus_core::arith_oracle::div_stub)]
     fn vested_never_exceeds_total() {
         let start: u64 = kani::any();
         let duration: u64 = kani::any();
@@ -667,6 +687,9 @@ mod proofs {
 
         let t: u64 = kani::any();
         assert!(schedule(start, duration, total, t) <= total, "vested exceeded total");
+        // Non-vacuity: the branch that multiplies and divides is reachable
+        // under the oracle's lemmas, not only the two that return early.
+        kani::cover!(start < t && t < start + duration, "the division branch is reachable");
     }
 
     #[kani::proof]
