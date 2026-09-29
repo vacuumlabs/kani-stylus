@@ -49,6 +49,8 @@ These are measured, not guessed — see [kb/50-feasibility.md](kb/50-feasibility
 - **Never run two mapping proofs concurrently.** One `cbmc` on a mapping proof
   reached 6.4 GiB resident; two at once OOM-killed the machine and, because
   terminal children share the editor's systemd scope, took VSCode down with it.
-  Run them one at a time inside `systemd-run --user --scope
-  --property=MemoryMax=10G` — see [kb/40-toolchain.md](kb/40-toolchain.md).
+  Run them one at a time inside `systemd-run --user`, with `MemoryMax` sized
+  below what `free -m` reports as available and the job niced. A fixed 10G cap
+  still froze the 23 GiB laptop, because the cap stops an OOM from spreading
+  but not machine-wide memory pressure — see [kb/40-toolchain.md](kb/40-toolchain.md).
 - Prefer `--output-format terse`; the default buries results in warnings.

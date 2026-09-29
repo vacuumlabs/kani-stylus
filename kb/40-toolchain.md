@@ -40,13 +40,28 @@ Two consequences:
 
   ```bash
   systemd-run --user --wait --collect --unit=kani-<harness> \
-      --property=MemoryMax=10G --property=MemorySwapMax=0 \
+      --property=MemoryMax=<cap> --property=MemoryHigh=<cap minus 1G> \
+      --property=MemorySwapMax=0 \
+      --nice=19 --property=CPUWeight=10 --property=IOWeight=10 \
       --working-directory="$PWD" \
       -- cargo kani --features proofs -Z stubbing --harness <harness>
   ```
 
   A transient unit is a *sibling* of the editor's scope, not a child. Add
   `/usr/bin/time -v` around it to capture peak RSS.
+
+  **Size `<cap>` to what is free, not to a fixed number.** Measured
+  2026-09-29: a full `./verify.sh vesting` inside `MemoryMax=10G` still made
+  the 23 GiB laptop unusable, because the desktop already held ~10 GiB and
+  `kani-driver` peaks at ~8 GiB on `vested_is_monotone_in_time`. The cap stops
+  an OOM from spreading; it does nothing about machine-wide memory pressure.
+  Take `available` from `free -m`, leave a few GiB of headroom, and let the job
+  be OOM-killed inside its cgroup rather than squeeze everything else.
+  `MemoryHigh` makes the kernel reclaim from the job before it reaches the cap,
+  and the nice/weight settings keep the desktop responsive while it runs.
+  Most of that ~8 GiB goes on assertion-reachability checks: for a measurement
+  run where vacuity is checked another way, `--no-assertion-reach-checks` cuts
+  `kani-driver` to tens of MiB (see [35-arithmetic-oracle.md](35-arithmetic-oracle.md)).
 
 **`rust-toolchain.toml` vs. Kani — resolved, not a problem.** Kani drives its own
 bundled nightly, and it was suspected that a crate pinning a toolchain (as
