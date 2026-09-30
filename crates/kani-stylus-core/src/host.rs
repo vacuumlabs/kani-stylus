@@ -2,27 +2,43 @@
 //! values, so Kani can verify a Stylus contract over all inputs at once.
 
 use alloc::vec::Vec;
-use core::cell::RefCell;
 
 use alloy_primitives::{Address, B256, U256};
 use stylus_sdk::stylus_core::*;
 
 use crate::context::Context;
 use crate::keccak;
-use crate::storage::SlotStore;
+use crate::slots;
+use crate::storage::{with_store, Store, MAX_SLOTS};
 
-/// The default VM: 16 storage slots. Suits most contracts.
+/// The default VM: up to 16 large storage slots — mapping entries and other
+/// hashed slots. A contract's own fields do not count against it.
 ///
-/// Need more? Name the parameter: `SymbolicVm::<64>::new()`. The keccak bound
-/// is separate and global — see [`crate::keccak::MAX_HASHES`].
+/// Need more? Name the parameter: `SymbolicVm::<32>::new()`. The keccak and
+/// mapping-entry bounds are separate and global — see
+/// [`crate::keccak::MAX_HASHES`] and [`crate::slots::MAX_ENTRIES`].
 pub type SymbolicVM = SymbolicVm<16>;
 
 /// A symbolic Stylus host.
 ///
-/// `SLOTS` bounds distinct storage slots touched in one proof. Exceeding it
-/// prunes the path rather than wrapping, so a proof cannot silently check less
-/// than it claims — but it can become vacuous, so assert reachability with
-/// `kani::cover` if a proof passes implausibly fast.
+/// `SLOTS` bounds the distinct *large* storage slots one proof may touch:
+/// mapping entries and other hashed slots. Slots below
+/// [`SMALL_SLOTS`](crate::storage::SMALL_SLOTS), which is where a contract's
+/// own fields live, are free. Exceeding the bound fails the proof loudly.
+///
+/// # One VM per proof
+///
+/// The host is zero-sized: storage and context are globals, like the keccak
+/// and arithmetic oracles. That is what makes it cheap — the SDK clones its
+/// `Box<dyn Host>` on every storage access, and cloning a zero-sized box
+/// allocates nothing. Measured on four fields read back, the formula went
+/// from 577k to 221k variables. See `kb/36-storage-model.md`.
+///
+/// So there is one chain state per proof. Building a second VM with
+/// [`new`](Self::new) or its siblings fails the proof; handles made by
+/// cloning, or by [`with_timestamp`](Self::with_timestamp), share it.
+/// Changing the context changes it for every handle — which is the next
+/// transaction, as it is on chain.
 ///
 /// # Example
 ///
@@ -34,26 +50,22 @@ pub type SymbolicVM = SymbolicVm<16>;
 ///     // ... symbolic inputs, then assert the invariant
 /// }
 /// ```
-pub struct SymbolicVm<const SLOTS: usize> {
-    state: alloc::rc::Rc<RefCell<VmState<SLOTS>>>,
-    ctx: Context,
-}
+#[derive(Clone, Copy)]
+pub struct SymbolicVm<const SLOTS: usize>;
 
-struct VmState<const SLOTS: usize> {
-    slots: SlotStore<SLOTS>,
-}
+/// The one context. See [`SymbolicVm`] and [`crate::context`].
+static mut CTX: Context = Context::concrete();
+static mut BUILT: bool = false;
 
-// Derived Clone would demand `SLOTS: Clone`; write it out instead.
-impl<const SLOTS: usize> Clone for SymbolicVm<SLOTS> {
-    fn clone(&self) -> Self {
-        Self {
-            state: self.state.clone(),
-            ctx: self.ctx,
-        }
-    }
+fn with_ctx<R>(f: impl FnOnce(&mut Context) -> R) -> R {
+    // SAFETY: Kani gives each harness its own program and verifies sequential
+    // code only, as for the store and the oracles.
+    unsafe { f(&mut *core::ptr::addr_of_mut!(CTX)) }
 }
 
 impl<const SLOTS: usize> SymbolicVm<SLOTS> {
+    const FITS: () = assert!(SLOTS <= MAX_SLOTS, "SymbolicVm::<SLOTS> exceeds storage::MAX_SLOTS");
+
     /// Symbolic storage and a fully symbolic transaction context.
     pub fn new() -> Self {
         Self::with_context(Context::symbolic())
@@ -66,37 +78,63 @@ impl<const SLOTS: usize> SymbolicVm<SLOTS> {
     }
 
     pub fn with_context(ctx: Context) -> Self {
-        Self {
-            state: alloc::rc::Rc::new(RefCell::new(VmState {
-                slots: SlotStore::new(),
-            })),
-            ctx,
+        #[allow(clippy::let_unit_value)]
+        let () = Self::FITS;
+        // SAFETY: see `with_ctx`.
+        unsafe {
+            assert!(
+                !*core::ptr::addr_of!(BUILT),
+                "kani-stylus: one SymbolicVm per proof -- clone it, or use with_timestamp/with_sender"
+            );
+            *core::ptr::addr_of_mut!(BUILT) = true;
         }
+        with_ctx(|c| *c = ctx);
+        Self
     }
 
-    /// Start from a concrete context and override selected fields.
+    /// Unwritten storage reads as an **arbitrary** value, fixed per slot,
+    /// rather than zero — so a proof starts from every possible state of the
+    /// contract at once instead of a fresh deployment.
+    ///
+    /// ```ignore
+    /// let vm = SymbolicVM::concrete_ctx().with_arbitrary_storage();
+    /// let mut v = Vault::from(&vm);
+    /// // v.balance_of(a), v.total(), ... are all arbitrary, and consistent
+    /// ```
+    ///
+    /// This is the pre-state of an inductive step, and it replaces seeding
+    /// each field by hand. It includes states no sequence of calls reaches —
+    /// `total` below the sum of balances, say — so state the invariant the
+    /// property needs with `kani::assume`, or a counterexample may start
+    /// somewhere unreachable.
+    ///
+    /// With it, *reading* a large slot also uses one of the `SLOTS`, since the
+    /// value drawn has to be remembered. Call it before any storage access.
+    pub fn with_arbitrary_storage(self) -> Self {
+        with_store(|s| s.make_arbitrary());
+        self
+    }
+
+    /// Set the caller, for this call and every later one.
     ///
     /// ```ignore
     /// let vm = SymbolicVM::concrete_ctx().with_sender(owner);
     /// ```
-    pub fn with_sender(mut self, sender: Address) -> Self {
-        self.ctx.msg_sender = sender;
+    pub fn with_sender(self, sender: Address) -> Self {
+        with_ctx(|c| c.msg_sender = sender);
         self
     }
 
-    pub fn with_value(mut self, value: U256) -> Self {
-        self.ctx.msg_value = value;
+    pub fn with_value(self, value: U256) -> Self {
+        with_ctx(|c| c.msg_value = value);
         self
     }
 
-    /// A second handle on the *same storage*, at a later clock.
+    /// Advance the clock: a handle on the same storage, at `block_timestamp`.
     ///
-    /// Unlike the builders above this borrows rather than consuming, because
-    /// both handles stay live: the `Rc` is shared, so writes made through the
-    /// old one are visible through the new one. That is what lets a proof
-    /// advance the block timestamp between calls — `Context` is a plain `Copy`
-    /// field, so `From<&H>` hands each contract its own copy and a later
-    /// mutation would not be seen.
+    /// Context is shared by every handle, so this is the clock for all of
+    /// them from here on — the next transaction. It borrows rather than
+    /// consuming so the old handle stays usable.
     ///
     /// ```ignore
     /// let mut v1 = Contract::from(&vm);
@@ -106,26 +144,32 @@ impl<const SLOTS: usize> SymbolicVm<SLOTS> {
     /// v2.claim();                       // sees v1's writes, at t2
     /// ```
     pub fn with_timestamp(&self, block_timestamp: u64) -> Self {
-        let mut ctx = self.ctx;
-        ctx.block_timestamp = block_timestamp;
-        Self { state: self.state.clone(), ctx }
+        with_ctx(|c| c.block_timestamp = block_timestamp);
+        Self
     }
 
     pub fn context(&self) -> Context {
-        self.ctx
+        with_ctx(|c| *c)
     }
 
-    /// Distinct storage slots written so far.
+    /// Distinct storage slots written so far (with arbitrary storage, also
+    /// large slots read).
     ///
     /// Use it to confirm a proof isn't silently bounded:
-    /// `assert!(vm.slots_touched() < 16)`.
+    /// `kani::cover!(vm.slots_touched() == 3)`.
     pub fn slots_touched(&self) -> usize {
-        self.state.borrow().slots.touched()
+        with_store(|s| s.touched())
     }
 
     /// Distinct keccak256 preimages hashed so far in this proof.
     pub fn hashes_taken(&self) -> usize {
         keccak::hashes_taken()
+    }
+
+    /// Distinct mapping entries given a structured slot so far — see
+    /// [`crate::slots`]. Zero when the `to_slot` stubs are not in use.
+    pub fn entries_derived(&self) -> usize {
+        slots::entries_derived()
     }
 
     /// Freeze the current storage, for use with [`Self::slots_changed_since`].
@@ -149,17 +193,17 @@ impl<const SLOTS: usize> SymbolicVm<SLOTS> {
     /// address covers every address at once. That is stronger but costs another
     /// mapping access. See `examples/vault` for both forms side by side.
     pub fn snapshot(&self) -> StorageSnapshot<SLOTS> {
-        StorageSnapshot(self.state.borrow().slots.clone())
+        StorageSnapshot(with_store(|s| *s))
     }
 
     /// Number of storage slots whose value differs from `before`.
     pub fn slots_changed_since(&self, before: &StorageSnapshot<SLOTS>) -> usize {
-        self.state.borrow().slots.changed_since(&before.0)
+        with_store(|s| s.changed_since::<SLOTS>(&before.0))
     }
 }
 
 /// Storage frozen at a point in time. Produced by [`SymbolicVm::snapshot`].
-pub struct StorageSnapshot<const SLOTS: usize>(SlotStore<SLOTS>);
+pub struct StorageSnapshot<const SLOTS: usize>(Store);
 
 impl<const SLOTS: usize> Default for SymbolicVm<SLOTS> {
     fn default() -> Self {
@@ -173,10 +217,10 @@ impl<const SLOTS: usize> Host for SymbolicVm<SLOTS> {}
 
 impl<const SLOTS: usize> StorageAccess for SymbolicVm<SLOTS> {
     fn storage_load_bytes32(&self, key: U256) -> B256 {
-        self.state.borrow().slots.load(key)
+        with_store(|s| s.load::<SLOTS>(key))
     }
     unsafe fn storage_cache_bytes32(&self, key: U256, value: B256) {
-        self.state.borrow_mut().slots.store(key, value);
+        with_store(|s| s.store::<SLOTS>(key, value))
     }
     // Writes are visible immediately, so flushing is a no-op. Contracts must
     // not be able to observe the difference; if one can, that is a finding.
@@ -193,16 +237,16 @@ impl<const SLOTS: usize> CryptographyAccess for SymbolicVm<SLOTS> {
 
 impl<const SLOTS: usize> MessageAccess for SymbolicVm<SLOTS> {
     fn msg_sender(&self) -> Address {
-        self.ctx.msg_sender
+        with_ctx(|c| c.msg_sender)
     }
     fn msg_value(&self) -> U256 {
-        self.ctx.msg_value
+        with_ctx(|c| c.msg_value)
     }
     fn msg_reentrant(&self) -> bool {
         false
     }
     fn tx_origin(&self) -> Address {
-        self.ctx.tx_origin
+        with_ctx(|c| c.tx_origin)
     }
 }
 
@@ -214,10 +258,10 @@ impl<const SLOTS: usize> BlockAccess for SymbolicVm<SLOTS> {
         Address::ZERO
     }
     fn block_number(&self) -> u64 {
-        self.ctx.block_number
+        with_ctx(|c| c.block_number)
     }
     fn block_timestamp(&self) -> u64 {
-        self.ctx.block_timestamp
+        with_ctx(|c| c.block_timestamp)
     }
     fn block_gas_limit(&self) -> u64 {
         30_000_000
@@ -226,7 +270,7 @@ impl<const SLOTS: usize> BlockAccess for SymbolicVm<SLOTS> {
 
 impl<const SLOTS: usize> ChainAccess for SymbolicVm<SLOTS> {
     fn chain_id(&self) -> u64 {
-        self.ctx.chain_id
+        with_ctx(|c| c.chain_id)
     }
 }
 
@@ -235,7 +279,7 @@ impl<const SLOTS: usize> AccountAccess for SymbolicVm<SLOTS> {
         U256::ZERO
     }
     fn contract_address(&self) -> Address {
-        self.ctx.contract_address
+        with_ctx(|c| c.contract_address)
     }
     fn code(&self, _account: Address) -> Vec<u8> {
         Vec::new()

@@ -57,6 +57,11 @@
 //!    `kani::assume(false)` rather than wrapping, so a proof can never quietly
 //!    check *less* than it claims — but it can become vacuous. If a proof
 //!    passes implausibly fast, check reachability with `kani::cover`.
+//! 4. **Digests are assumed not to land among structured slots** — the
+//!    2^-64 of slot space whose top limb is [`crate::slots::TAG`], where
+//!    [`crate::slots`] puts mapping entries when their slot derivation is
+//!    stubbed. Same reasoning as assumption 2: without it the solver can alias
+//!    a hashed slot with a mapping entry, which no real layout does.
 
 use alloy_primitives::{B256, U256};
 
@@ -134,8 +139,11 @@ impl HashOracle {
             kani::assume(self.digests[j] != digest);
             j += 1;
         }
-        // ...and to stay clear of the low slots used by scalar fields.
-        kani::assume(U256::from_be_bytes(digest.0) >= U256::from(MIN_DIGEST_SLOT));
+        // ...and to stay clear of the low slots used by scalar fields, and of
+        // the structured slots `crate::slots` hands out.
+        let as_slot = U256::from_be_bytes(digest.0);
+        kani::assume(as_slot >= U256::from(MIN_DIGEST_SLOT));
+        kani::assume(as_slot.as_limbs()[3] != crate::slots::TAG);
 
         // Prune paths that would exceed the table rather than overwrite.
         kani::assume(self.len < MAX_HASHES);

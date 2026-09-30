@@ -24,3 +24,9 @@ stylus-sdk = { version = "0.10.9", default-features = false, features = ["stylus
 # lint for genuine typos.
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)'] }
+
+[features]
+# Run the SDK's own mapping slot derivation, through the keccak oracle, in every
+# `proof!` harness -- instead of the structured slots of `slots`. The check on
+# the abstraction; see kb/36-storage-model.md.
+precise-storage = []

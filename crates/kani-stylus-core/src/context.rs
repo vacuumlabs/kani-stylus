@@ -6,10 +6,15 @@
 //! would be verified against an attacker who can change identity mid-call. The
 //! context has to be fixed for the duration of a transaction, exactly as it is
 //! on chain.
+//!
+//! There is one context per proof, held globally like storage, so that the
+//! host can be zero-sized — see [`SymbolicVm`](crate::SymbolicVm). Changing it
+//! between calls, with `with_sender` or `with_timestamp`, models the next
+//! transaction: every handle sees the change.
 
 use alloy_primitives::{Address, U256};
 
-/// Symbolic execution context, fixed for the lifetime of one proof.
+/// Symbolic execution context, fixed for the duration of a call.
 #[derive(Clone, Copy)]
 pub struct Context {
     pub msg_sender: Address,
@@ -41,7 +46,7 @@ impl Context {
     /// doesn't depend on context (pure storage round-trips, arithmetic).
     ///
     /// Measured on the counter example: roughly 14s concrete vs 26s symbolic.
-    pub fn concrete() -> Self {
+    pub const fn concrete() -> Self {
         Self {
             msg_sender: Address::ZERO,
             msg_value: U256::ZERO,

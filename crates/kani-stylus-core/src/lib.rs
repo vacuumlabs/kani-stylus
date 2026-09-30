@@ -41,24 +41,29 @@
 //!
 //! # Setup
 //!
-//! The contract crate needs the `stylus-test` feature. That feature is what
-//! makes the generic `From` impl exist and makes `VM` hold a `Box<dyn Host>`;
-//! it does *not* mean you use `TestVM`.
+//! The contract crate needs the `stylus-test` feature for verification, and
+//! only then. That feature is what makes the generic `From` impl exist and
+//! makes `VM` hold a `Box<dyn Host>`; it does *not* mean you use `TestVM`. On
+//! in a deployed build, it breaks every host call. So both go behind an opt-in
+//! feature, and this crate is a regular optional dependency — `cargo kani`
+//! builds the lib target, where dev-dependencies are not available:
 //!
 //! ```toml
 //! [dependencies]
-//! stylus-sdk = { version = "0.10.9", features = ["stylus-test"] }
+//! kani-stylus-core = { path = "../../crates/kani-stylus-core", optional = true }
 //!
-//! [dev-dependencies]
-//! kani-stylus-core = { path = "../../crates/kani-stylus-core" }
+//! [features]
+//! proofs = ["dep:kani-stylus-core", "stylus-sdk/stylus-test"]
 //! ```
 //!
-//! Then `cargo kani --output-format terse`.
+//! Then `cargo kani --features proofs -Z stubbing --output-format terse`.
 //!
 //! # What is and isn't modelled
 //!
-//! Modelled: persistent storage (bounded), keccak256 (as an uninterpreted
-//! injective function — see [`keccak`]), `msg`/`block`/`chain` context.
+//! Modelled: persistent storage (bounded; see [`storage`]), mapping slot
+//! derivation (as an injective function — see [`slots`]), keccak256 (as an
+//! uninterpreted injective function — see [`keccak`]), `msg`/`block`/`chain`
+//! context.
 //! Optionally, `U256` division exactly by its specification ([`arith`]), or
 //! `*` and `/` as uninterpreted functions constrained by lemmas
 //! ([`arith_oracle`]).
@@ -77,11 +82,27 @@
 //! by assuming it away (`kani::assume(a.checked_add(b).is_some())`) or by
 //! asserting the property you actually want (`assert!(result >= a)`).
 //!
-//! **Bounds prune, so proofs can go vacuous.** Exceeding `SLOTS` or `HASHES`
-//! kills the path via `kani::assume(false)` rather than wrapping — safe, but an
+//! **Some bounds prune, so proofs can go vacuous.** Exceeding `SLOTS` or
+//! [`slots::MAX_ENTRIES`] fails the proof, but exceeding the keccak oracle's
+//! `MAX_HASHES` kills the path via `kani::assume(false)` — safe, but an
 //! over-tight bound can leave nothing to check. If a proof passes implausibly
-//! fast, add a `kani::cover` for the state you expect to reach, or assert
-//! `vm.slots_touched() < SLOTS`.
+//! fast, add a `kani::cover` for the state you expect to reach.
+//!
+//! # Storage: structured by default, precise on request
+//!
+//! Write harnesses that touch mappings with [`proof!`]. It attaches the stubs
+//! that give mapping entries structured slots ([`slots`]) instead of hashing
+//! them, which is several times cheaper and grows more slowly with the
+//! number of keys. Turn on this crate's `precise-storage` feature and the same
+//! harnesses run the SDK's real slot derivation through the keccak oracle:
+//!
+//! ```bash
+//! cargo kani --features proofs -Z stubbing                                  # structured
+//! cargo kani --features proofs,kani-stylus-core/precise-storage -Z stubbing # precise
+//! ```
+//!
+//! Why this is safe, what it assumes, and how Certora, hevm and Halmos do the
+//! same: `kb/36-storage-model.md`.
 //!
 //! [`stylus_core::Host`]: https://docs.rs/stylus-core/0.10.9/stylus_core/host/trait.Host.html
 
@@ -107,6 +128,8 @@ pub mod host;
 #[cfg(kani)]
 pub mod keccak;
 #[cfg(kani)]
+pub mod slots;
+#[cfg(kani)]
 pub mod storage;
 
 #[cfg(kani)]
@@ -120,5 +143,69 @@ pub use context::{any_address, any_u256, Context};
 pub use host::{StorageSnapshot, SymbolicVM, SymbolicVm};
 #[cfg(kani)]
 pub use keccak::{keccak_stub, HashOracle};
-#[cfg(kani)]
-pub use storage::SlotStore;
+
+/// Declare Kani harnesses with kani-stylus's storage model attached.
+///
+/// ```ignore
+/// kani_stylus_core::proof! {
+///     /// Any attributes go through, `#[kani::should_panic]` and extra
+///     /// `#[kani::stub]`s included.
+///     fn balances_do_not_alias() {
+///         // ...
+///     }
+///
+///     fn another_harness() { /* ... */ }
+/// }
+/// ```
+///
+/// Each function becomes a `#[kani::proof]` with the keccak oracle stubbed
+/// in, plus — unless this crate's `precise-storage` feature is on — the
+/// structured slot derivation of [`slots`] for `Address`, `bool` and unsigned
+/// integer keys. Run with `-Z stubbing`. [`precise_proof!`] always leaves the
+/// slot derivation real, for a harness that must.
+///
+/// Signed integer keys are left to the keccak oracle, although [`slots`] has
+/// their stubs: Kani expands each `#[kani::stub]` one level deeper than the
+/// last, and past about fourteen Kani attributes on one function rustc's
+/// default `recursion_limit` of 128 is exhausted. Nine leaves room for a
+/// harness's own — `#[kani::should_panic]` and the two
+/// [`arith_oracle`] stubs, say. A harness that needs them can list them itself.
+#[cfg(not(feature = "precise-storage"))]
+#[macro_export]
+macro_rules! proof {
+    ($($(#[$m:meta])* fn $name:ident() $body:block)*) => {$(
+        #[kani::proof]
+        #[kani::stub(stylus_sdk::crypto::keccak, kani_stylus_core::keccak_stub)]
+        #[kani::stub(<stylus_sdk::alloy_primitives::Address as stylus_sdk::storage::StorageKey>::to_slot, kani_stylus_core::slots::address_to_slot)]
+        #[kani::stub(<bool as stylus_sdk::storage::StorageKey>::to_slot, kani_stylus_core::slots::bool_to_slot)]
+        #[kani::stub(<u8 as stylus_sdk::storage::StorageKey>::to_slot, kani_stylus_core::slots::u8_to_slot)]
+        #[kani::stub(<u16 as stylus_sdk::storage::StorageKey>::to_slot, kani_stylus_core::slots::u16_to_slot)]
+        #[kani::stub(<u32 as stylus_sdk::storage::StorageKey>::to_slot, kani_stylus_core::slots::u32_to_slot)]
+        #[kani::stub(<u64 as stylus_sdk::storage::StorageKey>::to_slot, kani_stylus_core::slots::u64_to_slot)]
+        #[kani::stub(<u128 as stylus_sdk::storage::StorageKey>::to_slot, kani_stylus_core::slots::u128_to_slot)]
+        #[kani::stub(<usize as stylus_sdk::storage::StorageKey>::to_slot, kani_stylus_core::slots::usize_to_slot)]
+        $(#[$m])*
+        fn $name() $body
+    )*};
+}
+
+/// Declare Kani harnesses with kani-stylus's storage model attached — the
+/// precise variant, selected by this crate's `precise-storage` feature.
+#[cfg(feature = "precise-storage")]
+#[macro_export]
+macro_rules! proof {
+    ($($t:tt)*) => { kani_stylus_core::precise_proof! { $($t)* } };
+}
+
+/// Like [`proof!`], but mapping slots are always derived by the SDK itself,
+/// hashing through the keccak oracle. This is what `precise-storage` makes
+/// every [`proof!`] do.
+#[macro_export]
+macro_rules! precise_proof {
+    ($($(#[$m:meta])* fn $name:ident() $body:block)*) => {$(
+        #[kani::proof]
+        #[kani::stub(stylus_sdk::crypto::keccak, kani_stylus_core::keccak_stub)]
+        $(#[$m])*
+        fn $name() $body
+    )*};
+}
