@@ -99,21 +99,25 @@ experiments recorded later in this file; each says how it was verified.
    the ABI router from raw calldata — which is what "panic freedom over arbitrary
    calldata" actually requires — remains unattempted and is strictly harder. The
    proposal conflates the two; say method-level explicitly in any writeup.
-8. **Can mapping proofs be made cheap enough for multi-account properties?**
-   Raised 2026-09-09 and **immediately downgraded from "gating" the same day.**
-   Conservation turned out not to need it — reformulating as local-delta lemmas
-   converges today at 463–1904s per harness (see "Conservation by local deltas").
-   What remains is pace and reach: half an hour per harness makes iteration
-   miserable, and 6.4–10 GiB per `cbmc` caps how many accounts fit. Diagnosis
-   and the remaining levers are in the mappings section; confirm by varying
-   `SLOTS` alone before optimising.
+8. ~~**Can mapping proofs be made cheap enough for multi-account properties?**~~
+   — **Answered 2026-09-30: yes, by modelling storage more abstractly.** A
+   staged ladder located the cost in three layers — the host's
+   `Rc<RefCell<..>>` plumbing, re-cloned by the SDK on every access; the flat
+   slot list; and keccak digests for mapping slots — and replacing them cut
+   three symbolic mapping keys from 130s and 7.0M clauses to 21s and 0.8M,
+   and a nested map from 38.5s to 6.6s. The first two changes are encodings,
+   the third an abstraction with a `precise-storage` flag to turn it off.
+   Measured end to end on `examples/vault` in
+   [36-storage-model.md](36-storage-model.md#measured).
 9. **How do we express properties over *sequences* of calls?** Raised
-   2026-09-09. Every harness today proves one method call from a hand-havoc'd
-   state, but the properties contract authors want ("no sequence of calls
-   breaks this") need either an inductive invariant — base case plus a step case
-   from arbitrary state satisfying the invariant — or a bounded symbolic-action
-   dispatcher. Neither is prototyped, and there is no `SymbolicVM::havoc()` to
-   build the arbitrary pre-state conveniently.
+   2026-09-09. Every harness proves one method call from an arbitrary state,
+   but the properties contract authors want ("no sequence of calls breaks
+   this") need either an inductive invariant — base case plus a step case from
+   arbitrary state satisfying the invariant — or a bounded symbolic-action
+   dispatcher. Neither is prototyped. **Partly unblocked 2026-09-30:**
+   `SymbolicVM::with_arbitrary_storage()` now gives the step case its
+   pre-state, replacing field-by-field seeding
+   ([36-storage-model.md](36-storage-model.md#arbitrary-storage-api)).
 
 ## Scope judgements
 
@@ -416,7 +420,9 @@ converges today.
 hypothesis was that `SlotStore`'s linear scan of up to `SLOTS` symbolic 256-bit
 keys drives the cost. It drives *formula size* but not *solve time*: see
 "`SLOTS` is a memory dial, not a time dial" below. What actually makes mapping
-proofs slow is still unknown.
+proofs slow is still unknown. *(Answered 2026-09-30 — see question 8. The
+list's* capacity *was indeed not the cost; the list itself, holding every
+field and re-scanned on every access, was one of three.)*
 
 Of the four levers once listed here, two were **measured on 2026-09-09 and do
 not help with time** — lowering `SLOTS`, and giving digests a concrete high-bit
@@ -538,7 +544,9 @@ soundness signal** — worth knowing before someone reads it as one. `cvc5` and
 
 **What actually drives solve time is still unknown.** Remaining untested
 candidates: narrowing `U256` values to `u64` shapes, which shrinks the search
-space rather than the formula; the two-tier slot store.
+space rather than the formula; the two-tier slot store. *(Answered
+2026-09-30: the two-tier store is one of the three changes in
+[36-storage-model.md](36-storage-model.md).)*
 
 ### Finding: memory, not time, is the binding constraint on mapping proofs
 

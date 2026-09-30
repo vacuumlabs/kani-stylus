@@ -30,10 +30,11 @@ kani-stylus/
 ├── proposal.md          the hackathon/grant pitch
 ├── kb/                  this knowledge base
 ├── crates/
-│   └── kani-stylus-core/  the library: SymbolicVM, slot store, keccak oracle
+│   └── kani-stylus-core/  the library: SymbolicVM, storage model, keccak and arithmetic oracles
 └── examples/            each a real, deployable `cargo stylus new` project
     ├── counter/         storage, arithmetic, payable methods
-    └── vault/           access control and mappings
+    ├── vault/           access control, mappings, ERC-20 allowances
+    └── vesting/         time and integer division
 ```
 
 Everything under `examples/` is **excluded** from the workspace, deliberately.
@@ -99,6 +100,11 @@ git clone --depth 1 https://github.com/model-checking/kani vendor/kani  # vendor
       abandoned; conservation is decomposed into per-method delta + frame
       lemmas, with the induction over call sequences a **disclosed hand
       argument**. New API: `vm.snapshot()` / `vm.slots_changed_since()`.
+- [x] **Storage modelled at the level contracts use it (2026-09-30).** A
+      zero-sized host, a two-tier store, and structured mapping slots by
+      default, with a `precise-storage` feature for the SDK's own keccak
+      derivation; plus `with_arbitrary_storage()` for arbitrary pre-state.
+      See [36-storage-model.md](36-storage-model.md).
 - [ ] A short **"write your first proof" walkthrough**. README §4 links out to
       upstream docs; nothing yet takes a developer from their own contract to a
       first passing harness.

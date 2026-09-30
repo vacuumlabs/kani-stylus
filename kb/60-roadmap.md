@@ -55,6 +55,11 @@ and its reach.
        digest width are *size* levers, and size governs memory and encodability
        rather than speed — so rank time work by **real solves only**, never by
        formula size, which was tried as a fast proxy and is invalid here.
+       **Re-cut 2026-09-30:** the storage model itself was the rest. A
+       zero-sized host, a two-tier store and structured mapping slots — the
+       last behind a `precise-storage` flag — cut three symbolic keys from
+       130s to 21s and made ERC-20 `transfer_from` provable from an arbitrary
+       state. See [36-storage-model.md](36-storage-model.md).
 2. [ ] **Properties over sequences of calls.** *Closes Q9.*
        Every harness today proves one method call from a hand-havoc'd state, but
        "no sequence of calls breaks this" is the property contract authors
@@ -63,9 +68,9 @@ and its reach.
        and the inductive form (base case + step case from arbitrary state
        satisfying the invariant — unbounded, but needs the invariant found and
        usually strengthened).
-       Needs a `SymbolicVM::havoc()` so arbitrary pre-state stops being built
-       field-by-field by hand, as in
-       [`examples/vault`](../examples/vault/src/lib.rs).
+       The arbitrary pre-state now exists —
+       `SymbolicVM::with_arbitrary_storage()`, used by the vault's conservation
+       lemmas since 2026-09-30.
        *Done when:* one vault property holds over all interleavings of ≥3 calls.
 3. [ ] **A property library.** The crate README pitches one; the reality is
        hand-written harnesses per contract. Reusable templates — conservation,
@@ -74,6 +79,8 @@ and its reach.
        *Done when:* a new contract gets a meaningful proof suite by naming its
        methods, not by writing SMT-shaped Rust.
 4. [ ] **Verify a contract we didn't write.** *Closes Q5.*
+       OZ's ERC-20 keys its maps by `Address`, which structured slots cover;
+       an ERC-721's `U256` token ids are not covered yet (item 9).
        OpenZeppelin [`rust-contracts-stylus`](https://github.com/OpenZeppelin/rust-contracts-stylus)
        ERC-20. **No longer blocked on item 1** — item 0 shows the local-delta
        formulation works at current speed, so the question is now whether OZ's
@@ -101,6 +108,11 @@ and its reach.
        loudly. Reentrancy is the property that would make this land with
        auditors — and it is inherently a multi-call property, so it depends on
        item 2, not just on modelling the call.
+9. [ ] **Structured slots for `U256` and `B256` keys.** Kani 0.67 crashes when
+       asked to stub a method of a generic impl, which is what their
+       `StorageKey::to_slot` is; until then they hash through the keccak oracle
+       at the old per-key price. Retry on Kani 0.68. See
+       [36-storage-model.md](36-storage-model.md#kani-limits-that-shaped-this).
 8. [ ] **CI integration.** Proposal Phase 3. A GitHub Action running the suite
        per pull request. **Deliberately last:** the vault suite is 3155s today,
        so this is gated on item 1 rather than on any CI work. Shipping it before

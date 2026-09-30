@@ -96,8 +96,11 @@ stock template can be made to *shrink* by adding to it, because `alloy`'s
 `U256 + U256` is `wrapping_add` and never panics. `--playback` prints the exact
 values.
 
-[`examples/vault`](examples/vault/) covers what a counter can't: mappings and
-owner-gated access control.
+[`examples/vault`](examples/vault/) covers what a counter can't: mappings,
+owner-gated access control, and ERC-20 allowances proved from an arbitrary
+state. Mapping slots are modelled structurally by default; `./verify.sh
+--precise-storage` runs the SDK's own derivation instead — see
+[`kb/36-storage-model.md`](kb/36-storage-model.md).
 
 [`examples/vesting`](examples/vesting/) adds time and integer division. Work in
 progress.
@@ -146,10 +149,10 @@ verify.sh          run the proof suites
 proposal.md        the hackathon / grant pitch
 kb/                knowledge base for humans and agents
 crates/
-  kani-stylus-core/  the library: SymbolicVM, slot store, keccak oracle
+  kani-stylus-core/  the library: SymbolicVM, storage model, keccak and arithmetic oracles
 examples/          each one a real, deployable `cargo stylus new` project
   counter/         storage, arithmetic, payable methods
-  vault/           access control and mappings
+  vault/           access control, mappings, ERC-20 allowances
   vesting/         time and integer division (WIP)
 ```
 

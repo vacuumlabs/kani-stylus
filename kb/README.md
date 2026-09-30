@@ -11,6 +11,7 @@ Read these in order when picking up the project cold:
 | [20-stylus.md](20-stylus.md) | How Stylus contracts and the ArbOS host interface actually work |
 | [30-kani.md](30-kani.md) | What Kani can and can't verify, and how it's driven |
 | [35-arithmetic-oracle.md](35-arithmetic-oracle.md) | Why `U256` `*` and `/` defeat SAT; exact division vs. the lemma-based oracle, and when to use which |
+| [36-storage-model.md](36-storage-model.md) | Where storage cost went, the structured-slot model and its `precise-storage` flag, arbitrary storage, and how Certora, hevm and Halmos do the same |
 | [40-toolchain.md](40-toolchain.md) | Local versions, environment gotchas |
 | [50-feasibility.md](50-feasibility.md) | Proposal claims vs. what the source says; open questions |
 | [60-roadmap.md](60-roadmap.md) | What's next and in what order; why it differs from the proposal |
