@@ -21,6 +21,13 @@
 #
 # vesting also gates its slowest and non-converging harnesses behind a
 # `slow-proofs` feature, which this script deliberately does not enable.
+#
+# Assertion-reachability checks are off. They change no verdict: an
+# unreachable assertion passes vacuously either way, and they only report
+# which ones did. They cost memory, though: with them on, the vault suite
+# climbed past 7.6 GB on one harness and stalled (2026-10-01). What is lost is
+# Kani's list of vacuous assertions; three of the vault's lemmas check their
+# own non-vacuity with `kani::cover!`, and the rest go without.
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -30,7 +37,7 @@ if [[ "${1:-}" == --precise-storage ]]; then
     shift
 fi
 
-COMMON=(--features "$FEATURES" --output-format terse)
+COMMON=(--features "$FEATURES" --output-format terse --no-assertion-reach-checks)
 COUNTER=(--manifest-path examples/counter/Cargo.toml "${COMMON[@]}")
 VAULT=(--manifest-path examples/vault/Cargo.toml "${COMMON[@]}" -Z stubbing)
 VESTING=(--manifest-path examples/vesting/Cargo.toml "${COMMON[@]}" -Z stubbing)
