@@ -1,5 +1,7 @@
 # kani-stylus
 
+<img src="assets/logo.svg" alt="" width="120" align="right">
+
 Bounded model checking for [Arbitrum Stylus](https://docs.arbitrum.io/stylus/gentle-introduction)
 smart contracts, using [Kani](https://model-checking.github.io/kani/).
 
