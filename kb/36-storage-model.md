@@ -341,11 +341,25 @@ counter's seven harnesses went from 137s to 31s in total (e.g.
 14 vault harnesses end as they should, the six `should_panic` ones included.
 
 **With Kani's defaults.** Everything above is without assertion-reachability
-checks. With them — `verify.sh`'s flags — `transfer_conserves_total` did not
+checks. With them — `verify.sh`'s flags until 2026-10-01 — `transfer_conserves_total` did not
 finish inside a 4.7 GiB cap: the solver was done (UNSAT) but processing the
 results stalled at the memory limit, 6 minutes of CPU in 15 of wall time and a
 3.7 GiB peak. The heaviest harnesses need either more memory than this laptop
 spares or `--no-assertion-reach-checks`; see [Method notes](#method-notes).
+
+**So `verify.sh` now passes `--no-assertion-reach-checks`** (2026-10-01).
+Recording the demo, `./verify.sh vault` with the checks on stalled twice:
+85 minutes with no progress on `approve_sets_exactly_one_allowance` under a
+6 GB `MemoryHigh` (alone, with 7.6 GB, it verified in 137.7s against 14s
+without the checks), then `credit_checked_moves_total_by_the_same_delta`
+climbing from 2.4 to 7.7 GB in two minutes under a 7.6 GB one. The checks
+change no verdict, since Kani counts an unreachable assertion as passing; they
+only list which assertions were vacuous. Three vault lemmas guard against
+that themselves with `kani::cover!`. The others don't.
+
+With the flag, the same day: `./verify.sh counter` 7 of 7, every harness
+under 8s; `./verify.sh vault` 14 of 14 in 645s, peak 2.4 GB, no throttling.
+Slowest were the `transfer_from` lemmas, 105–122s.
 
 ## Kani limits that shaped this
 
