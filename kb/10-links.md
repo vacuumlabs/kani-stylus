@@ -81,3 +81,17 @@ Checked for a 200 on 2026-09-29. Discussed in
 - [Niemetz, Preiner, Zohar, *Scalable Bit-Blasting with Abstractions*, CAV 2024](https://bitwuzla.github.io/data/NiemetzPZ-CAV24.pdf) — Bitwuzla's solver-level abstraction
 - [Bryant et al., *Deciding Bit-Vector Arithmetic with Abstraction*, TACAS 2007](https://people.eecs.berkeley.edu/~sseshia/pubdir/uclid-tacas07.pdf)
 - [model-checking/kani#3112](https://github.com/model-checking/kani/issues/3112) — uninterpreted functions in Kani, open
+
+## Storage models in other verifiers
+
+Checked for a 200 on 2026-09-30; code links are pinned to a commit. Discussed
+in [36-storage-model.md](36-storage-model.md).
+
+- Certora: [havoc at rule start](https://docs.certora.com/en/latest/docs/user-guide/glossary.html#term-havoc) · [storage and memory analysis](https://docs.certora.com/en/latest/docs/prover/techniques/index.html#analysis-of-evm-storage-and-evm-memory) · [`-enableStorageSplitting`](https://docs.certora.com/en/latest/docs/prover/cli/options.html#enablestoragesplitting) · [keccak model](https://docs.certora.com/en/latest/docs/prover/approx/hashing.html#modeling-the-keccak-function-bounded-case) · [`StorageSplitter.kt`, the per-contract fallback](https://github.com/Certora/CertoraProver/blob/63fdea80a35b36ebfe0cff5dff9009b90e91966c/src/main/kotlin/analysis/split/StorageSplitter.kt#L143-L151) · [Grossman et al., memory splitting, OOPSLA 2024](https://cnandi.com/docs/oopsla24-cr.pdf)
+- hevm: [`decomposeStorage`](https://github.com/argotorg/hevm/blob/c39757a24425bbc9c56b2c40a5d45faf4bfe70f4/src/EVM/Expr.hs#L1134-L1212) · [per-query fallback](https://github.com/argotorg/hevm/blob/c39757a24425bbc9c56b2c40a5d45faf4bfe70f4/src/EVM/SMT.hs#L114-L129) · [PR #436](https://github.com/argotorg/hevm/pull/436) · [decomposition fixes, PR #1094](https://github.com/argotorg/hevm/pull/1094)
+- Halmos: [`GenericStorage`'s injective encoding](https://github.com/a16z/halmos/blob/079bb4241d1b460baf986257d56ea86977d73451/src/halmos/sevm.py#L2026-L2029) · [`--storage-layout`](https://github.com/a16z/halmos/blob/079bb4241d1b460baf986257d56ea86977d73451/src/halmos/config.py#L344-L348) · [#208, mixed layouts](https://github.com/a16z/halmos/issues/208)
+- Kontrol: [keccak lemmas](https://github.com/runtimeverification/kontrol/blob/75bb958ddcebf9f2f0ff5aaa5712831303065612/src/kontrol/kdist/keccak.md)
+- [Solidity SMTChecker encoding](https://docs.soliditylang.org/en/latest/smtchecker.html#smt-encoding-and-types) · [Move Prover, TACAS 2022](https://arxiv.org/abs/2110.08362)
+- [OtterSec stellar-verify](https://github.com/otter-sec/stellar-verify/blob/f4e7a2a2563ab46d70b9185e51d584022ec8beb3/stellar/soroban-env-common/src/storage.rs) — Kani on Soroban
+- Stylus: [Certora's WebAssembly hosts](https://github.com/Certora/CertoraProver/blob/63fdea80a35b36ebfe0cff5dff9009b90e91966c/lib/GeneralUtils/src/main/kotlin/cli/Converter.kt#L370-L375) (Soroban and NEAR only) · [Skribe final report](https://forum.arbitrum.foundation/t/skribe-advanced-fuzzing-for-stylus-final-milestone-report/30984) (a fuzzer)
+- Kani stubbing limits: [#1997](https://github.com/model-checking/kani/issues/1997) (generic trait functions) · [PR #4587](https://github.com/model-checking/kani/pull/4587) (trait impls, 0.68) · [#4588](https://github.com/model-checking/kani/issues/4588) (default methods, open)

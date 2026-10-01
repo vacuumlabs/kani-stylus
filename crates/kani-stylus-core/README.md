@@ -93,30 +93,56 @@ all behave exactly as before, because none of them enable `proofs`.
 | `SymbolicVM::concrete_ctx()` | symbolic storage, concrete context — ~2× cheaper |
 | `.with_sender(a)` / `.with_value(v)` | pin one context field |
 | `any_u256()` / `any_address()` | symbolic values of the right shape |
-| `SymbolicVm::<64>` | raise the storage-slot bound from the default 16 |
-| `vm.slots_touched()` / `vm.hashes_taken()` | check a bound isn't silently binding |
+| `.with_arbitrary_storage()` | unwritten storage reads as arbitrary values — start from every state at once |
+| `kani_stylus_core::proof! { fn ... }` | harnesses that touch mappings, with the storage model's stubs attached |
+| `SymbolicVm::<32>` | raise the bound on mapping entries and other large slots from the default 16 |
+| `vm.slots_touched()` / `vm.entries_derived()` / `vm.hashes_taken()` | check a bound isn't silently binding |
 | `vm.snapshot()` / `vm.slots_changed_since(&s)` | frame conditions — "this call changed nothing else" |
 
-## Mappings need the keccak stub
+One VM per proof: storage and context are global, which is what makes the host
+cheap. Clone a VM, or use `with_timestamp`/`with_sender`, to get more handles;
+changing the context changes it for all of them — the next transaction.
 
-Stylus mappings hash through `stylus_sdk::crypto::keccak`, which calls
-`alloy_primitives::keccak256` **directly** rather than through the `Host` trait.
-Implementing `native_keccak256` is therefore not enough on its own — real keccak
-would still reach the solver, which it cannot survive.
+## Mappings: declare harnesses with `proof!`
 
-Any harness touching a mapping needs:
+Stylus puts `map[key]` at `keccak256(key ‖ map's slot)`, and computes that
+through `stylus_sdk::crypto::keccak` — **directly**, not through the `Host`
+trait — so a harness that touches a mapping needs stubs. `proof!` attaches
+them:
 
 ```rust
-#[kani::proof]
-#[kani::stub(stylus_sdk::crypto::keccak, kani_stylus_core::keccak_stub)]
-fn balances_do_not_alias() { /* ... */ }
+kani_stylus_core::proof! {
+    fn balances_do_not_alias() { /* ... */ }
+
+    #[kani::should_panic]          // other attributes go through
+    fn credit_can_silently_wrap() { /* ... */ }
+}
 ```
 
-and `cargo kani -Z stubbing`.
+and `cargo kani -Z stubbing`. It picks one of two storage models for every
+harness in the run:
 
-The stub models keccak256 as an **uninterpreted injective function**: the same
-preimage always gives the same digest, distinct preimages always give distinct
-digests, and nothing else is assumed. The solver never sees a round of keccak.
+- **Structured (default).** The SDK's slot derivation for `Address`, `bool`
+  and unsigned-integer keys is replaced by an injective numbering of
+  `(map, key)` pairs, so nothing is hashed at all. Several times cheaper than
+  hashing, and the gap grows with the number of keys. Exact, given that
+  distinct mapping entries never share a slot — the collision freedom every
+  Solidity and Stylus layout already rests on — so counterexamples are real.
+  See [`slots`](src/slots.rs).
+- **Precise** — `--features proofs,kani-stylus-core/precise-storage`. The SDK
+  derives every slot itself and keccak256 is modelled as an **uninterpreted
+  injective function**: the same preimage always gives the same digest,
+  distinct preimages distinct digests, and nothing else. The check on the
+  abstraction, and the model for `U256`, `B256`, signed-integer and byte-string
+  keys in either mode, which Kani cannot stub. Budget for it: combined with
+  `with_arbitrary_storage()`, the vault's heaviest lemmas did not finish in 15
+  minutes where structured slots take two or three.
+
+`kani_stylus_core::precise_proof!` pins one harness to the precise model.
+Written by hand, a harness needs at least
+`#[kani::stub(stylus_sdk::crypto::keccak, kani_stylus_core::keccak_stub)]`.
+Why this is safe, what each model assumes, and how Certora, hevm and Halmos do
+the same: [`kb/36-storage-model.md`](../../kb/36-storage-model.md).
 
 ## Nonlinear arithmetic: `arith` and `arith_oracle`
 
@@ -164,6 +190,17 @@ sums 2^160 balances — but say so rather than implying the sum was checked.
 Two ways to write the frame condition, both in
 [`examples/vault`](../../examples/vault):
 
+Start from an arbitrary state rather than seeding one by hand:
+
+```rust
+let vm = SymbolicVM::concrete_ctx().with_sender(from).with_arbitrary_storage();
+let mut v = Vault::from(&vm);
+let before_total = v.total();       // any value at all, and the same on every read
+```
+
+That includes states no sequence of calls reaches, so state any invariant the
+lemma needs with `kani::assume`.
+
 ```rust
 // Cheap: count slots. Needs no knowledge of slot derivation.
 let before = vm.snapshot();
@@ -188,12 +225,9 @@ Two practical notes:
 - **Use `checked_add`/`checked_sub` in the assertions too**, not just in the
   contract. Bare `+` on `U256` wraps, so `assert_eq!(after, before + amount)`
   quietly proves something weaker than you meant.
-- **Tighten `SLOTS`.** `changed_since` costs up to `SLOTS^2` symbolic 256-bit
-  comparisons, and the conservation lemmas simply cannot be *encoded* within
-  5 GiB above `SymbolicVm::<4>`. This buys memory, not time — see
-  [`kb/50-feasibility.md`](../../kb/50-feasibility.md). Pair it with
-  `kani::cover!(vm.slots_touched() == 3)` so a too-tight bound fails loudly
-  instead of passing vacuously.
+- **Cover the interesting case.** A `kani::cover!` such as
+  `vm.slots_changed_since(&before) == 2` shows the lemma is not passing
+  vacuously — that the method can succeed and move what it should.
 
 ## Two traps worth knowing before you trust a result
 
@@ -207,55 +241,44 @@ kani::assume(a.checked_add(b).is_some());  // rule it out as a precondition
 assert!(result >= a);                      // or assert what you actually want
 ```
 
-**Bounds prune, so proofs can go vacuous.** Exceeding the storage-slot or hash
-bound kills the execution path via `kani::assume(false)` rather than wrapping.
-That's safe — a proof can never check *less* than it claims — but an over-tight
-bound can leave nothing to check at all. If a proof passes implausibly fast, add
-a `kani::cover` for a state you expect to reach, or assert
-`vm.slots_touched() < SLOTS`.
+**Some bounds prune, so proofs can go vacuous.** Exceeding `SLOTS` or
+`slots::MAX_ENTRIES` fails the proof loudly, but exceeding the keccak oracle's
+`MAX_HASHES` kills the execution path via `kani::assume(false)`. That's safe —
+a proof can never check *less* than it claims — but an over-tight bound can
+leave nothing to check at all. If a proof passes implausibly fast, add a
+`kani::cover` for a state you expect to reach.
 
 ## Keeping proofs fast
 
-Solver cost is driven by how wide your symbolic values are and how many storage
-slots you touch, not by how much contract code runs. Measured on the examples
-(Kani 0.67.0, solver time only; the dependency compile is shared and cached).
+Solver cost is driven by how wide your symbolic values are and how much
+storage the proof touches, not by how much contract code runs. Measured on
+[`examples/vault`](../../examples/vault) on 2026-09-30 (Kani 0.67.0,
+`--no-assertion-reach-checks`, one cgroup per harness):
 
-**Scalar storage — seconds.**
+| Harness | Structured | Precise | Before the storage rework |
+| --- | --- | --- | --- |
+| `vault::only_owner_can_transfer_ownership` | 7s | 6s | 53s |
+| `vault::credit_then_read_roundtrips` | 6s | 24s | 56s |
+| `vault::distinct_accounts_do_not_alias` | 22s | 91s | 226s |
+| `vault::transfer_does_not_move_any_other_balance` | 41s | 119s | 371s |
+| `vault::transfer_conserves_total` | 150s | > 15 min | > 15 min |
+| `vault::transfer_from_moves_nothing_else` | 167s | > 15 min | > 15 min |
 
-| Harness | Time |
-| --- | --- |
-| `counter::starts_at_zero` | 12s |
-| `counter::set_then_get_roundtrips` | 39s |
-| `counter::add_number_is_exact_when_it_does_not_overflow` | 65s |
-| `vault::only_owner_can_transfer_ownership` | 72s |
-| `counter::mul_number_can_wrap` | 80s |
-
-**Mappings — minutes, growing with the number of accesses.**
-
-| Harness | Mapping work | Time |
-| --- | --- | --- |
-| `vault::credit_then_read_roundtrips` | 1 account, 1 write | 142s |
-| `vault::credit_can_silently_wrap` | 1 account, 2 writes | 257s |
-| `vault::credit_checked_never_wraps` | 1 account, 2 guarded writes | 270s |
-| `vault::credit_checked_moves_total_by_the_same_delta` | 1 account, delta + frame | 236s |
-| `vault::transfer_does_not_move_any_other_balance` | 3 accounts, symbolic frame | 359s |
-| `vault::distinct_accounts_do_not_alias` | 2 accounts, 2 guarded writes | 478s |
-| `vault::transfer_conserves_total` | 2 accounts, delta + frame | 495s |
-
-Under ten minutes per harness, and the full 17-harness suite across both
-examples runs in **46 minutes** (was ~125). Most of that came from storing the
-keccak oracle's memo table as 256-bit words rather than byte arrays — the win
-scales with the number of distinct hashes, up to -81% on the three-account
-lemma. Four other candidates (`SLOTS`, `MAX_HASHES`, digest width, solver
-choice) were each worth <=10%; see
-[`kb/50-feasibility.md`](../../kb/50-feasibility.md).
-
-The **binding constraint is memory, not time**: one `cbmc` on a mapping proof
-needs several GiB, so these proofs are effectively serial on a laptop
-regardless of core count. Run them one at a time, one cgroup each — two at once
-OOM-killed a 23 GiB machine and took the editor with it, because terminal
-children share its systemd scope. The `systemd-run --user` recipe is in
+Structured storage is the default; the other columns and what changed are in
+[`kb/36-storage-model.md`](../../kb/36-storage-model.md). The heaviest vault
+harnesses now peak at about 2.4 GiB. Memory used to be the binding
+constraint — one `cbmc` on a mapping proof needed several GiB — so still run
+heavy proofs one at a time, one cgroup each: two at once once OOM-killed a
+23 GiB machine and took the editor with it, because terminal children share
+its systemd scope. The `systemd-run --user` recipe is in
 [`kb/40-toolchain.md`](../../kb/40-toolchain.md).
+
+**Most of the default verification time is not your proof.** With Kani's
+assertion-reachability checks on, which is the default, a small harness spent
+about three quarters of its time turning the checks' traces into results:
+10.5s against 49s without them, at half the memory. Use
+`--no-assertion-reach-checks` while iterating and cover non-vacuity with
+explicit `kani::cover!`s; run the defaults before you trust a result.
 
 Two measurement notes: `--harness` is a **substring** filter, so use `--exact`
 with the fully qualified name for a single harness; and never compare timings
@@ -269,25 +292,21 @@ In rough order of what to reach for when something is slow:
    `U256` is right when the property is *about* the boundary — the overflow
    proofs in the examples have to be full width.
 2. **Reach for `concrete_ctx()` on mapping-heavy proofs.** A fully symbolic
-   transaction context costs only ~6s on scalar proofs, so `new()` is the right
-   default there — but it adds 15–35% to mapping proofs, where it is worth
-   dropping if the property doesn't depend on the caller.
+   transaction context is cheap on scalar proofs, so `new()` is the right
+   default there — but on 2026-09-08 it added 15–35% to mapping proofs, where
+   it is worth dropping if the property doesn't depend on the caller.
 3. **Constrain hard with `kani::assume`.** Every precondition you state is input
    space the solver doesn't explore.
-4. **Keep `SLOTS` just large enough — for memory, not speed.** Measured
-   2026-09-09: varying `SLOTS` from 2 to 16 changes the formula 2.5x but leaves
-   solve time flat (157s / 196s / 185s / 192s). What it buys is *encodability*:
-   `transfer_conserves_total` cannot be encoded within 5 GiB above
-   `SymbolicVm::<4>`. Since memory is the binding constraint, a tight bound is
-   still the difference between a proof running and not — it just will not make
-   a running proof faster. Pair it with `kani::cover!` so a too-tight bound
-   fails loudly instead of passing vacuously.
+4. **Split a lemma that asserts several arithmetic identities.** Storage is
+   cheap now, so what is left is the `U256` arithmetic you assert. The vault's
+   `transfer_from` lemmas ran past 15 minutes as one harness and take two to
+   three minutes each as two.
 5. Iterate with `--harness <name>`; only run the full suite when you mean it.
 
 ## What is and isn't modelled
 
-Modelled: persistent storage (bounded), keccak256 (as above), and
-`msg` / `block` / `chain` context.
+Modelled: persistent storage (bounded), mapping slot derivation and keccak256
+(as above), and `msg` / `block` / `chain` context.
 
 Not modelled — and a proof that reaches one of these **fails loudly** rather
 than inventing an answer: cross-contract calls, `CREATE`/`CREATE2`, gas
@@ -310,7 +329,7 @@ out at 420s. The same proof against `SymbolicVM` takes 6s. See
 
 ## Examples
 
-Both are real, deployable `cargo stylus new` projects with proofs added in
+All are real, deployable `cargo stylus new` projects with proofs added in
 place, next to their existing unit tests — not bespoke verification crates.
 
 **[`examples/counter`](../../examples/counter)** is the place to start: the
@@ -318,9 +337,13 @@ stock template. Storage round-trips, three silently-wrapping arithmetic methods,
 and a `#[payable]` method proved over every possible `msg_value`.
 
 **[`examples/vault`](../../examples/vault)** covers what a counter cannot:
-owner-gated methods over a symbolic caller, and mappings (so it needs
-`-Z stubbing`).
+owner-gated methods over a symbolic caller, mappings (so it needs
+`-Z stubbing`), and ERC-20 allowances — a nested map — proved from an
+arbitrary state.
 
-In both, `cargo test` and `cargo build` behave exactly as they did before —
+**[`examples/vesting`](../../examples/vesting)** adds time and integer
+division, and uses [`arith_oracle`](src/arith_oracle.rs).
+
+In each, `cargo test` and `cargo build` behave exactly as they did before —
 confirmed by inspecting the built wasm for `kani` and `stylus-test` symbols
 (there are none).

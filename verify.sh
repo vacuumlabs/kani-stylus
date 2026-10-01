@@ -7,21 +7,30 @@
 #   ./verify.sh vesting              just examples/vesting
 #   ./verify.sh -h <harness>         one harness (searches all)
 #   ./verify.sh --playback <harness> print the counterexample as a runnable test
+#   ./verify.sh --precise-storage …  any of the above, with mapping slots derived
+#                                    by the SDK through the keccak oracle rather
+#                                    than structured (kb/36-storage-model.md)
 #
 # Each example is a standalone, deployable Stylus project, so proofs are behind
 # an opt-in `proofs` feature and ordinary builds are untouched.
 #
 # The vault and vesting both need `-Z stubbing`, for different reasons: the
-# vault because Stylus mappings hash through `stylus_sdk::crypto::keccak`
-# rather than through the `Host` trait, vesting because a symbolic `U256`
-# division has to be replaced by its specification or the proof diverges.
+# vault because its mapping harnesses stub the SDK's slot derivation (see
+# `kani_stylus_core::proof!`), vesting because a symbolic `U256` division has
+# to be replaced by its specification or the proof diverges.
 #
 # vesting also gates its slowest and non-converging harnesses behind a
 # `slow-proofs` feature, which this script deliberately does not enable.
 set -euo pipefail
 cd "$(dirname "$0")"
 
-COMMON=(--features proofs --output-format terse)
+FEATURES=proofs
+if [[ "${1:-}" == --precise-storage ]]; then
+    FEATURES=proofs,kani-stylus-core/precise-storage
+    shift
+fi
+
+COMMON=(--features "$FEATURES" --output-format terse)
 COUNTER=(--manifest-path examples/counter/Cargo.toml "${COMMON[@]}")
 VAULT=(--manifest-path examples/vault/Cargo.toml "${COMMON[@]}" -Z stubbing)
 VESTING=(--manifest-path examples/vesting/Cargo.toml "${COMMON[@]}" -Z stubbing)

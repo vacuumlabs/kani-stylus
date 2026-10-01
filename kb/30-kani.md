@@ -89,6 +89,20 @@ formula. Mitigations, roughly in order of what to reach for:
 Always check the [Rust feature support](https://model-checking.github.io/kani/rust-feature-support.html)
 table before assuming a construct verifies.
 
+**Stubbing has limits, and they decide where a model can hook in.** Measured
+on Kani 0.67.0, 2026-09-30: generic trait methods cannot be stubbed
+([#1997](https://github.com/model-checking/kani/issues/1997)), methods of
+generic impls crash the compiler, and about fourteen Kani attributes on one
+function exhaust rustc's recursion limit. Details and what worked instead:
+[36-storage-model.md](36-storage-model.md#kani-limits-that-shaped-this).
+
+**Assertion-reachability checks can dominate the run.** They are on by
+default, and on a small harness most of the reported verification time went on
+turning their traces into results, not on CBMC: 49s with them, 10.5s
+without, at half the memory (2026-09-30). `--no-assertion-reach-checks` plus
+explicit `kani::cover!`s is the cheaper way to iterate; see
+[36-storage-model.md](36-storage-model.md#method-notes).
+
 ## Experimental features that may be useful later
 
 - [Function contracts](https://model-checking.github.io/kani/reference/experimental/contracts.html) —
