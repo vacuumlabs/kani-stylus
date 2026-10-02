@@ -158,4 +158,4 @@ examples/          each one a real, deployable `cargo stylus new` project
 
 ## License
 
-Not yet chosen. Apache-2.0 OR MIT would match both `stylus-sdk` and `kani`.
+[MIT](LICENSE).
