@@ -4,9 +4,10 @@
 with [Kani](https://model-checking.github.io/kani/), AWS's SMT-backed bounded
 model checker, instead of only unit-testing them.
 
-The full pitch (hackathon framing, grant trajectory, MVP scope) is in
-[`../proposal.md`](../proposal.md). Read [50-feasibility.md](50-feasibility.md)
-alongside it — the proposal's central technical premise needs revising.
+The pitch (hackathon framing, what it proves, limits, roadmap) is in
+[`../proposal.md`](../proposal.md), rewritten 2026-10-02 to match this KB. The
+original 2026-09-08 draft assumed an older SDK; what it got wrong is recorded
+in [50-feasibility.md](50-feasibility.md).
 
 ## What "done" looks like for the MVP
 

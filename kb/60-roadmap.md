@@ -118,9 +118,10 @@ and its reach.
        so this is gated on item 1 rather than on any CI work. Shipping it before
        proofs are fast produces a red, ignored badge.
 
-## Why not the proposal's phases
+## Why not the original proposal's phases
 
-[proposal.md](proposal.md) §6 sequences the post-hackathon work as
+The original 2026-09-08 draft of [proposal.md](../proposal.md)
+(`git show 9bcfbab:proposal.md`) sequenced the post-hackathon work in §6 as
 cross-contract calls and reentrancy (Months 1–2), Solidity-proxy storage layout
 compatibility (Months 3–4), then CI (Months 5–6). Three problems, all of which
 only became visible after measuring:
@@ -139,6 +140,9 @@ Keep the proposal's out-of-scope list (full dynamic ABI decoding, AST linting) �
 still sensible.
 
 ## Deliberately not on the roadmap
+The proposal was rewritten on 2026-10-02 and its roadmap now follows this
+file.
+
 
 - **Upstream SDK contributions.** A `mock-host` feature split (the
   `Box<dyn Host>` VM without `dep:stylus-test`) would cut build times and make

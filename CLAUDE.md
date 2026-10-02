@@ -9,11 +9,10 @@ The knowledge base in [kb/](kb/) is the project's shared context. Start with
 [kb/README.md](kb/README.md), which indexes the rest. At minimum, before doing
 architectural work, read [kb/20-stylus.md](kb/20-stylus.md) (how the host
 interface is actually structured) and [kb/50-feasibility.md](kb/50-feasibility.md)
-(where the proposal is out of date, and the open risks).
+(what the original proposal got wrong, and the open risks).
 
-[proposal.md](proposal.md) is a pitch, not a spec. Its central technical premise
-is stale for stylus-sdk ≥ 0.10 — check it against the KB before implementing
-from it.
+[proposal.md](proposal.md) is a pitch, not a spec. It was rewritten on
+2026-10-02 to match the KB; where the two disagree, the KB wins.
 
 ## Conventions
 
