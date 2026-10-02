@@ -26,11 +26,15 @@ That proof **fails** on the stock `cargo stylus new` template, with a witness.
 
 ## Setup
 
+New to Kani? [`docs/first-proof.md`](../../docs/first-proof.md) walks through
+everything below on a fresh project, with the output to expect.
+
 Add this to the project `cargo stylus new` gave you — no restructuring needed:
 
 ```toml
 [dependencies]
-kani-stylus-core = { path = "path/to/kani-stylus-core", optional = true }
+kani-stylus-core = { git = "https://github.com/vacuumlabs/kani-stylus", optional = true }
+# or, from a local checkout: { path = "path/to/kani-stylus-core", optional = true }
 
 [dev-dependencies]
 # For `cargo test`, per the Stylus testing guide.

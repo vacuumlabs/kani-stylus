@@ -28,6 +28,7 @@ kani-stylus/
 ├── Cargo.toml           workspace over crates/ only
 ├── verify.sh            run the proof suites
 ├── README.md            getting started (links out to upstream docs)
+├── docs/first-proof.md  walkthrough: fresh project → first proof → counterexample → fix
 ├── proposal.md          the hackathon/grant pitch
 ├── kb/                  this knowledge base
 ├── crates/
@@ -111,9 +112,12 @@ git clone --depth 1 https://github.com/model-checking/kani vendor/kani  # vendor
       default, with a `precise-storage` feature for the SDK's own keccak
       derivation; plus `with_arbitrary_storage()` for arbitrary pre-state.
       See [36-storage-model.md](36-storage-model.md).
-- [ ] A short **"write your first proof" walkthrough**. README §4 links out to
-      upstream docs; nothing yet takes a developer from their own contract to a
-      first passing harness.
+- [x] **"Write your first proof" walkthrough (2026-10-02):**
+      [`docs/first-proof.md`](../docs/first-proof.md). It goes from a fresh
+      `cargo stylus new` project to a passing proof, a failing one, its replayed
+      counterexample and a proved fix. Every command and output in it was run on
+      a fresh template with a `git` dependency on this repo. No newcomer has
+      followed it yet, which is the roadmap's "done when" test.
 - [ ] A more substantial verification target. ERC-20 is a plausible stepping
       stone but is **not** settled — the interesting goal is something closer to
       a real DeFi contract. No longer blocked on mapping proof cost since the

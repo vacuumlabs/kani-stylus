@@ -103,6 +103,13 @@ without, at half the memory (2026-09-30). `--no-assertion-reach-checks` plus
 explicit `kani::cover!`s is the cheaper way to iterate; see
 [36-storage-model.md](36-storage-model.md#method-notes).
 
+**An unsatisfied `kani::cover!` does not fail the run.** Measured 2026-10-02
+on Kani 0.67.0, with a harness whose cover can never hold. Kani printed
+`0 of 1 cover properties satisfied`, then `VERIFICATION:- SUCCESSFUL`, and
+exited 0. So a non-vacuity cover only protects you if someone reads that line.
+`verify.sh` passes either way, which matters now that
+`--no-assertion-reach-checks` leaves covers as the only vacuity check.
+
 ## Experimental features that may be useful later
 
 - [Function contracts](https://model-checking.github.io/kani/reference/experimental/contracts.html) —

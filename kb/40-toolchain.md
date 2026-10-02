@@ -136,7 +136,23 @@ enables the `stylus-test` feature.
 
 **Kani runs are slow.** A first run compiles the whole dependency tree through
 the Kani compiler, then runs `goto-instrument` and the solver. Budget minutes,
-not seconds, and prefer `--harness <name>` while iterating.
+not seconds, and prefer `--harness <name>` while iterating. Measured
+2026-10-02 on a fresh template, niced and capped: 2m32s to compile, then 8s to
+verify `set_then_get_roundtrips`. The first `cargo kani playback` builds the
+test profile separately, which took another 2m40s.
+
+**The stock template's `cargo test` does not build as generated.** Seen
+2026-10-02 with cargo-stylus 0.10.9: `cargo stylus new` writes a
+`test_counter` that uses `stylus_sdk::testing`, but no dev-dependency enables
+the `stylus-test` feature, so it fails with
+``could not find `testing` in `stylus_sdk` ``. `examples/counter` and
+[`docs/first-proof.md`](../docs/first-proof.md) add
+`stylus-sdk = { version = "0.10.9", features = ["stylus-test"] }` under
+`[dev-dependencies]`.
+
+**`systemd-run --wait` sends the job's output to the journal**, not to your
+redirect. Add `--pipe` to get it on stdout, or read it back with
+`journalctl --user -u <unit> -o cat`.
 
 ## Useful commands
 
