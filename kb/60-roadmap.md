@@ -11,9 +11,12 @@ measurement moves. Numbered open questions referenced below are that file's.
 
 ## The one-line summary
 
-Today kani-stylus is usable by its authors on scalar-storage properties and on
-conservation properties over mappings, at **under ten minutes per harness** —
-the full 17-harness suite runs in 46 minutes. It is not yet usable by anyone
+Today kani-stylus is usable by its authors on scalar-storage properties, on
+conservation and allowance properties over mappings from an arbitrary state,
+and on `x * y / z` business logic via the arithmetic oracle, at **under three
+minutes per harness** — 34 harnesses across three examples, and
+`./verify.sh vault` runs all 14 of its own in 645s
+([36-storage-model.md](36-storage-model.md#measured), 2026-10-01). It is not yet usable by anyone
 else on anything: there is no walkthrough, no reusable property library, and
 nothing has been verified that we did not write ourselves. Everything below is
 ordered by what it takes to change that second sentence.
@@ -114,8 +117,9 @@ and its reach.
        at the old per-key price. Retry on Kani 0.68. See
        [36-storage-model.md](36-storage-model.md#kani-limits-that-shaped-this).
 8. [ ] **CI integration.** Proposal Phase 3. A GitHub Action running the suite
-       per pull request. **Deliberately last:** the vault suite is 3155s today,
-       so this is gated on item 1 rather than on any CI work. Shipping it before
+       per pull request. **Deliberately last:** the vault suite was 3155s on
+       2026-09-10 (645s on 2026-10-01; each counter harness is under 8s), so
+       this is gated on item 1 rather than on any CI work. Shipping it before
        proofs are fast produces a red, ignored badge.
 
 ## Why not the original proposal's phases
@@ -136,13 +140,13 @@ only became visible after measuring:
   "prove an ERC-20", and nothing measured so far argues for it. Revisit if a
   user asks.
 
+The proposal was rewritten on 2026-10-02 and its roadmap now follows this
+file.
+
 Keep the proposal's out-of-scope list (full dynamic ABI decoding, AST linting) —
 still sensible.
 
 ## Deliberately not on the roadmap
-The proposal was rewritten on 2026-10-02 and its roadmap now follows this
-file.
-
 
 - **Upstream SDK contributions.** A `mock-host` feature split (the
   `Box<dyn Host>` VM without `dep:stylus-test`) would cut build times and make

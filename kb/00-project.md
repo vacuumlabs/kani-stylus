@@ -88,11 +88,16 @@ git clone --depth 1 https://github.com/model-checking/kani vendor/kani  # vendor
       wired in with `#[kani::stub]`: Stylus mappings call
       `stylus_sdk::crypto::keccak` directly, *not* through the `Host` trait, so
       implementing `native_keccak256` alone is not enough.
-- [x] **Worked examples**, both real `cargo stylus new` projects with proofs
-      added in place: [`examples/counter`](../examples/counter) (7 harnesses,
-      313s) and [`examples/vault`](../examples/vault) (10 harnesses, 2424s).
-      **17 of 17 verify** — clean full-suite run 2026-09-10, one cgroup per
-      harness, 46 minutes total (was ~125 before the oracle optimisation).
+- [x] **Worked examples**, each a real `cargo stylus new` project with proofs
+      added in place: [`examples/counter`](../examples/counter) (7 harnesses),
+      [`examples/vault`](../examples/vault) (14) and
+      [`examples/vesting`](../examples/vesting) (13 by default, plus 7 behind
+      `slow-proofs`). Latest runs, without reach checks: `./verify.sh counter`
+      7 of 7 and `./verify.sh vault` 14 of 14 in 645s (2026-10-01); vesting's
+      13 each end as they should, run one at a time (2026-09-30). See
+      [36-storage-model.md](36-storage-model.md#measured). The last
+      `./verify.sh` over every project was 2026-09-10 (17 of 17, 46 minutes,
+      before vesting and the allowance lemmas).
 - [x] **One command runs the whole suite** — [`verify.sh`](../verify.sh), with
       `--playback` for counterexamples.
 - [x] **Conservation proved (2026-09-09).** `examples/vault` gained `transfer`
@@ -111,7 +116,9 @@ git clone --depth 1 https://github.com/model-checking/kani vendor/kani  # vendor
       first passing harness.
 - [ ] A more substantial verification target. ERC-20 is a plausible stepping
       stone but is **not** settled — the interesting goal is something closer to
-      a real DeFi contract. Blocked on mapping proof cost.
+      a real DeFi contract. No longer blocked on mapping proof cost since the
+      2026-09-30 storage model; what is left in heavy harnesses is the `U256`
+      arithmetic they assert.
 
 **What comes after this list, and in what order, is in
 [60-roadmap.md](60-roadmap.md).**
