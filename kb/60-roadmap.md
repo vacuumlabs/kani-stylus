@@ -17,8 +17,9 @@ and on `x * y / z` business logic via the arithmetic oracle, at **under three
 minutes per harness** — 34 harnesses across three examples, and
 `./verify.sh vault` runs all 14 of its own in 645s
 ([36-storage-model.md](36-storage-model.md#measured), 2026-10-01). It is not yet usable by anyone
-else on anything: there is no walkthrough, no reusable property library, and
-nothing has been verified that we did not write ourselves. Everything below is
+else on anything: there is a walkthrough no newcomer has tried yet, no
+reusable property library, and nothing has been verified that we did not write
+ourselves. Everything below is
 ordered by what it takes to change that second sentence.
 
 ## Now (days) — close out the MVP
@@ -26,12 +27,13 @@ ordered by what it takes to change that second sentence.
 - [x] ~~A single command that runs the whole suite~~ — [`verify.sh`](../verify.sh)
       does this, including `--playback`. The 00-project status item is stale on
       this half.
-- [ ] **"Write your first proof" walkthrough.** README §4 links out to upstream
-      Stylus and Kani docs; there is still nothing that walks a developer from
-      their own contract to a first passing harness. This is the cheapest
-      adoption win available and needs no new code.
+- [ ] **"Write your first proof" walkthrough.** **Written 2026-10-02** as
+      [`docs/first-proof.md`](../docs/first-proof.md), with every command run on
+      a fresh `cargo stylus new` project. It found that the stock template's own
+      `cargo test` does not build as generated: the template doesn't enable
+      `stylus-test`.
       *Done when:* someone who has never used Kani can add a proof to a contract
-      we didn't write, following only the walkthrough.
+      we didn't write, following only the walkthrough. Not yet tried.
 
 ## Weeks — make it usable by someone else
 

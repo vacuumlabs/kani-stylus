@@ -110,6 +110,9 @@ leaves off.
 
 ### 4. Learn the two halves
 
+**Your first proof** — [`docs/first-proof.md`](docs/first-proof.md) takes a
+fresh `cargo stylus new` project to a proof, a counterexample and a proved fix.
+
 **Stylus** — start with the [gentle introduction](https://docs.arbitrum.io/stylus/gentle-introduction)
 and the [quickstart](https://docs.arbitrum.io/stylus/quickstart). Then the parts
 that matter here: [storage](https://docs.arbitrum.io/stylus/fundamentals/data-types/storage),
@@ -149,6 +152,7 @@ See [`kb/20-stylus.md`](kb/20-stylus.md) and [`kb/50-feasibility.md`](kb/50-feas
 
 ```
 verify.sh          run the proof suites
+docs/first-proof.md  walkthrough: from a fresh project to a first proof
 proposal.md        the hackathon / grant pitch
 kb/                knowledge base for humans and agents
 crates/
