@@ -1,8 +1,11 @@
 # Feasibility: proposal vs. reality
 
-[`../proposal.md`](../proposal.md) was written as a pitch, not a spec. This file
-records where it matches the code and where it doesn't. Update it as experiments
-land; it's the live risk register.
+The original draft of [`../proposal.md`](../proposal.md) (2026-09-08) was
+written as a pitch, not a spec. This file records where it matched the code and
+where it didn't; the quotes below are from that draft
+(`git show 9bcfbab:proposal.md`). The proposal was rewritten on 2026-10-02 to
+match these findings. Update this file as experiments land; it's the live risk
+register.
 
 Last checked 2026-09-08 against `stylus-sdk` / `stylus-core` **0.10.9** and Kani
 **0.67.0**.
@@ -50,7 +53,8 @@ novelty claim has to move. Honest positioning:
 The demo value is unchanged and arguably stronger: counterexamples from an
 injected bug are just as compelling, and the story is now "verification is
 one crate away for any Stylus contract" rather than a deep FFI hack. Reviewers
-who know the SDK will spot the stale premise, so fix it before submission.
+who know the SDK would spot the stale premise. **Fixed 2026-10-02:** the
+rewritten proposal uses this positioning.
 
 **Before relying on any of this, confirm which SDK version the target contracts
 use.** The proposal's framing may be accurate for pre-0.8 SDKs, where
@@ -119,7 +123,7 @@ experiments recorded later in this file; each says how it was verified.
    pre-state, replacing field-by-field seeding
    ([36-storage-model.md](36-storage-model.md#arbitrary-storage-api)).
 
-## Scope judgements
+## Scope judgements (on the original draft)
 
 - The proposal's out-of-scope list (cross-contract calls, full dynamic ABI
   decoding, AST linting) is sensible. Keep it.

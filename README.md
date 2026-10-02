@@ -102,8 +102,11 @@ state. Mapping slots are modelled structurally by default; `./verify.sh
 --precise-storage` runs the SDK's own derivation instead — see
 [`kb/36-storage-model.md`](kb/36-storage-model.md).
 
-[`examples/vesting`](examples/vesting/) adds time and integer division. Work in
-progress.
+[`examples/vesting`](examples/vesting/) adds time and integer division, and
+proves the vested amount never goes backwards for any total up to 2¹⁹², with
+the arithmetic oracle — see [`kb/35-arithmetic-oracle.md`](kb/35-arithmetic-oracle.md).
+Its slowest harnesses sit behind a `slow-proofs` feature that `verify.sh`
+leaves off.
 
 ### 4. Learn the two halves
 
@@ -153,9 +156,9 @@ crates/
 examples/          each one a real, deployable `cargo stylus new` project
   counter/         storage, arithmetic, payable methods
   vault/           access control, mappings, ERC-20 allowances
-  vesting/         time and integer division (WIP)
+  vesting/         time, integer division, monotonicity
 ```
 
 ## License
 
-Not yet chosen. Apache-2.0 OR MIT would match both `stylus-sdk` and `kani`.
+[MIT](LICENSE).

@@ -1,129 +1,138 @@
-# **kani-stylus: Bounded Model Checking and Formal Verification Harness for Arbitrum Stylus**
+# kani-stylus: formal verification for Arbitrum Stylus
 
-**Author:** Independent Protocol Engineer (Hackathon Track)  
-**Target Ecosystem:** Arbitrum Stylus / Orbit Chains
+**Team:** [Vacuumlabs](https://vacuumlabs.com) ·
+**Event:** Arbitrum Open House Singapore 2026, online Buildathon ·
+**Code:** <https://github.com/vacuumlabs/kani-stylus> (MIT)
 
-**Track Alignment:** Developer Tooling, Formal Verification, Protocol Security
+Facts below were verified against `stylus-sdk` 0.10.9 and Kani 0.67.0. Every
+measured number links to where it was recorded.
 
-**Post-Hackathon Funding Target:** Arbitrum Stylus Sprint Category C / Arbitrum DAO Domain Allocator Offerings
+## 1. Summary
 
-## **1\. Executive Summary**
+Stylus lets teams write Arbitrum contracts in Rust. The tools serious protocols
+use to *prove* a contract correct before it holds money (Certora, Halmos, hevm,
+Kontrol) are built for Solidity and EVM bytecode. We looked for one that
+verifies Stylus and [found none](kb/36-storage-model.md#prior-art).
 
-Arbitrum Stylus allows smart contracts written in Rust to execute alongside EVM bytecode within ArbOS, achieving up to 100x efficiency gains for computational logic while sharing an identical, co-equal 256-bit storage trie. However, the formal verification tooling landscape remains focused on Solidity, utilizing engines such as Halmos, Certora, and HEVM.
+kani-stylus connects Stylus to [Kani](https://model-checking.github.io/kani/),
+AWS's open-source model checker for Rust. You write a property once, and Kani
+checks it for every input: every caller, every amount, every starting state.
+When it fails, you get the exact input that breaks it, as a Rust test you can
+paste in.
 
-Rust smart contracts compiled to WebAssembly (wasm32-unknown-unknown) cannot currently leverage Rust-native formal verification engines like Kani (an SMT-backed bounded model checker developed by Amazon Web Services using the CBMC solver). When Kani evaluates a Stylus contract, execution fails immediately because the stylus-sdk depends on low-level ArbOS foreign function interface (FFI) declarations (extern "C") that are provided dynamically by the node runtime at onchain activation.
+## 2. The problem
 
-kani-stylus solves this execution boundary deficit by introducing a symbolic abstraction crate (kani-stylus-core) that mocks ArbOS host calls with bounded, symbolic in-memory models. This enables protocol engineers to formally prove functional invariants—such as token balance conservation, arithmetic overflow absence, and access control enforceability—across the entire input space without manual test vector generation.
+**`U256` arithmetic wraps silently.** The contract every Stylus developer
+starts from, the `cargo stylus new` template, has a bug: `add_number` can make
+the counter *smaller*. Its own unit test passes. `alloy`'s `U256 + U256` is
+`wrapping_add`, so where Solidity would revert, Stylus silently succeeds. Rust
+developers expect overflow to panic, and Kani's built-in overflow checks only
+cover primitive integers, so the property has to be stated. The harness is
+`add_number_can_decrease_the_counter` in
+[`examples/counter`](examples/counter/src/lib.rs).
 
-## **2\. Problem Statement and Architectural Context**
+**Tests and fuzzing only check the inputs someone tried.** In the same
+template, `increment` breaks at exactly one value in 2²⁵⁶. A fuzzer has to
+guess it, but a solver derives it (`increment_wraps_at_max`).
 
-### **The Host-Call Execution Barrier**
+**The SDK's own mock host can't be verified.** `TestVM` holds `std::HashMap`s,
+which seed SipHash with a `getrandom` syscall that Kani cannot model, so
+verification aborts before it reaches any contract code
+([kb/50-feasibility.md](kb/50-feasibility.md)). Handing a Stylus contract to
+Kani does not work out of the box.
 
-In Stylus, smart contracts interface with ArbOS through low-level C externs:
+## 3. What we built
 
-> * Reading transaction calldata via read\_args  
-> * Returning data buffers via write\_result  
-> * Reading and updating state via storage\_load\_bytes32 and storage\_cache\_bytes32  
-> * Inspecting transaction parameters via msg\_sender, msg\_value, and block context
+Since `stylus-sdk` 0.10, contracts reach ArbOS through a safe Rust trait,
+`stylus_core::Host`, and the generated code is generic over it
+([kb/20-stylus.md](kb/20-stylus.md)). So the work is not intercepting FFI.
+It is a *symbolic* host, plus the models that make proofs over it finish in
+minutes.
 
-When Kani attempts symbolic execution across native Rust contract code, it encounters unresolved external symbols or uninitialized memory pointers at the boundary of these extern calls. Without an SMT-compatible translation layer, bounded model checking crashes before reaching core contract business logic.
+| Component | In [`crates/kani-stylus-core`](crates/kani-stylus-core/) | What it does |
+| --- | --- | --- |
+| Symbolic host | `host.rs`, `context.rs` | `SymbolicVM` implements `stylus_core::Host`. By default the caller, value, origin, block number, timestamp and chain id are all symbolic. |
+| Storage model | `storage.rs`, `slots.rs` | Mapping slots are structured by default. The `precise-storage` feature runs the SDK's own keccak derivation instead. `with_arbitrary_storage()` starts a proof from any state. See [kb/36](kb/36-storage-model.md). |
+| Keccak oracle | `keccak.rs` | keccak256 as an uninterpreted, injective function. |
+| Arithmetic oracle | `arith.rs`, `arith_oracle.rs` | Exact `U256` division, and lemma-constrained `*` and `/` for `x * y / z` business logic. See [kb/35](kb/35-arithmetic-oracle.md). |
+| Frame conditions | `snapshot()`, `slots_changed_since()` | For "touches nothing else" properties. |
+| Runner | [`verify.sh`](verify.sh) | Runs every suite. `--playback` prints a counterexample. |
 
-### **Silent Runtime Failures in Stylus**
+It drops into the project `cargo stylus new` gives you: one optional
+dependency and a `proofs` feature. `cargo test`, `cargo build` and
+`cargo stylus check` don't change, and the built wasm contains no proof code
+([README](README.md#it-goes-in-your-normal-stylus-project)).
 
-Unlike standard Rust binaries, Stylus contracts compile under \#\!\[no\_std\] and enforce strict execution determinism:
+## 4. What it proves today
 
-> 1. **Unstructured Panics:** Rust panic\!() invocations cause Stylus contracts to abort immediately, consuming remaining gas and returning opaque errors to callers instead of clean ABI-encoded revert reasons.
+There are three examples, each a real `cargo stylus new` project with proofs
+added in place. All 34 harnesses run by default end as they should, and on a
+laptop `./verify.sh vault` runs all 14 of the vault's in under 11 minutes
+([measured](kb/36-storage-model.md#measured) 2026-09-30 and 2026-10-01).
 
-> 2. **Arithmetic Inconsistencies:** Subtle rounding behaviors and 256-bit integer conversions can result in state drift or vulnerability patterns across complex DeFi pricing models.
+- **[`counter`](examples/counter/)**, 7 harnesses: the template's `add_number`,
+  `mul_number` and `increment` all wrap, each found with an exact witness.
+- **[`vault`](examples/vault/)**, 14 harnesses, on an ERC-20-shaped contract:
+  - only the owner can transfer ownership, for every caller;
+  - `transfer` and `transferFrom` conserve total supply, from an arbitrary state;
+  - `transferFrom` spends exactly the allowance and moves no other balance or
+    allowance;
+  - distinct accounts never alias.
+- **[`vesting`](examples/vesting/)**, 13 harnesses by default: the vested amount
+  never decreases over time, for every schedule and any total up to 2¹⁹². Proofs
+  also find a schedule overflow and a re-initialisation bypass through the zero
+  address.
 
-> 3. **Privilege Leaks:** Complex inheritance and module structures in Rust contract libraries can result in administrative endpoints omitting caller authentication checks.
+## 5. Limits, stated plainly
 
-kani-stylus provides a deterministic symbolic execution framework that discovers counterexamples for these failure modes before deployment.
+- **One call from any state.** Each proof covers a single method call.
+  Conservation over *sequences* of calls rests on a hand induction over the
+  per-call lemmas, and is written down as such.
+- **Method level, not calldata level.** Proofs call methods directly. The ABI
+  router generated by `#[public]` is not verified yet.
+- **Rust source, not wasm.** Kani checks the source. It says nothing about
+  miscompilation or ArbOS semantics.
+- **Models are assumptions.** Structured slots and the arithmetic oracle trade
+  bit-level precision for proofs that finish. Each assumption is listed in
+  [kb/36](kb/36-storage-model.md#assumptions-all-together) and
+  [kb/35](kb/35-arithmetic-oracle.md). The `precise-storage` feature swaps in
+  the SDK's real slot derivation where a proof needs it.
+- **No cross-contract calls.** `call_contract` and friends are
+  `unimplemented!()`, so a proof that reaches one fails loudly instead of
+  passing.
 
-## **3\. Technical Architecture and Design**
+## 6. Roadmap
 
-kani-stylus is architected as an extensible verification harness comprising two key components: the symbolic runtime harness and the verification proof interface.
+In order. The reasoning and the measurements behind it are in
+[kb/60-roadmap.md](kb/60-roadmap.md).
 
-| System Component | Rust Module | Functionality & Abstraction |
-| :---- | :---- | :---- |
-| **Symbolic Host Stubs** | kani\_stylus\_core::host | Intercepts extern "C" declarations and substitutes them with bounded in-memory SMT stubs.  |
-| **Symbolic Storage Trie** | kani\_stylus\_core::storage | Mocks the EVM 256-bit key-value store using a bounded symbolic array returning kani::any().  |
-| **Execution Context Injector** | kani\_stylus\_core::context | Supplies non-deterministic symbolic callers, chain IDs, timestamps, and calldata.  |
-| **Verification Macro** | kani\_stylus::proof | Generates the CBMC proof harness and binds contract structs to symbolic memory.  |
+1. **Properties over sequences of calls.** A bounded dispatcher over symbolic
+   actions, and inductive invariants from an arbitrary state.
+2. **A property library.** Conservation, access control, monotonicity,
+   no-aliasing and panic freedom, instantiated by naming a contract's methods
+   instead of writing proofs.
+3. **OpenZeppelin's [Stylus contracts](https://github.com/OpenZeppelin/rust-contracts-stylus)**
+   verified unmodified, or a precise account of why not.
+4. **Modular verification** through Kani's function contracts, so a proved
+   method's spec is reused at its call sites.
+5. **Calldata-level proofs** through the `#[public]` router.
+6. **Cross-contract calls and reentrancy.**
+7. **A GitHub Action** that runs the proofs on every pull request.
 
-### **Symbolic Storage Model**
+Out of scope: full symbolic decoding of dynamic ABI types, and AST linting.
 
-The EVM storage model in Stylus maps 256-bit slot keys to 256-bit slot values. Under kani-stylus, storage reads and writes are mapped to an SMT-constrained symbolic associative array:
+## 7. Why it matters for Arbitrum
 
-> * When a slot is accessed via storage\_load\_bytes32, the harness evaluates whether that slot has been written to during the current symbolic execution path.  
-> * If unwritten, it generates a symbolic variable using kani::any::\<\[u8; 32\]\>() constrained by any user-defined precondition assumptions (kani::assume).  
-> * When state is modified via storage\_cache\_bytes32, the symbolic map records the symbolic state update, accurately tracking cross-slot state dependencies.
+Formal verification is how high-value EVM contracts are checked before they
+ship. A protocol weighing Stylus has none today, which is a reason to keep its
+critical code in Solidity. kani-stylus closes that gap with open-source tooling
+that fits the Rust workflow Stylus developers already use. After the
+Buildathon, we intend to seek Arbitrum ecosystem grant funding to deliver the
+roadmap above.
 
-### **Invariant Verification Mechanism**
+---
 
-The verifier evaluates three classes of contract invariants without requiring concrete unit test inputs:
-
-> 1. **Arithmetic Conservation:** For token contracts, proving that transfers strictly preserve total balance invariants:  
->    $$\\text{balance}(A)\_{\\text{post}} \+ \\text{balance}(B)\_{\\text{post}} \= \\text{balance}(A)\_{\\text{pre}} \+ \\text{balance}(B)\_{\\text{pre}}$$  
->    across all values of $A$, $B$, and amounts without arithmetic wrap-around.
-
-> 2. **Access Control Enforcement:** Proving that administrative endpoints unconditionally trigger an execution rollback or return an unauthorized error when msg::sender() does not match the stored owner address.
-
-> 3. **Panic Freedom:** Verifying that no arbitrary sequence of calldata bytes can induce an unexpected Rust panic\!() in public ABI functions.
-
-## **4\. Minimum Viable Product (MVP) Scope (48–72 Hours)**
-
-The hackathon MVP is engineered strictly for single-developer execution within a 2-to-3-day sprint. It focuses exclusively on stubbing critical host calls and proving properties over a standard Stylus ERC-20 implementation.
-
-### **In-Scope Hackathon Deliverables**
-
-> * **kani-stylus-core Crate:** Stub implementations for the five most critical Stylus ArbOS host operations:  
-  * read\_args (symbolic calldata buffer)  
-  * write\_result (symbolic return buffer validation)  
-  * storage\_load\_bytes32 (symbolic storage read)  
-  * storage\_cache\_bytes32 (symbolic storage write)  
-  * msg\_sender (symbolic 20-byte caller address)
-
-> * **Two Formal Verification Proofs:**  
-  * Proof 1: *ERC-20 Transfer Conservation Proof* confirming zero balance leakage across all permutations.
-
-  * Proof 2: *Ownable Access Control Proof* verifying that unauthorized callers cannot access protected endpoints.
-
-> * **Defect Injection and Counterexample Verification:** Demonstrating that Kani detects intentionally inserted arithmetic and access control vulnerabilities and outputs concrete counterexample traces.
-
-> * **Automated Test Runner:** A single script or cargo alias executing cargo kani across the target harnesses with human-readable CLI summaries.
-
-### **Explicitly Out-of-Scope for the MVP**
-
-> * Simulating external contract-to-contract call dispatch (stylus\_sdk::call).  
-> * Full symbolic parsing of complex ABI dynamic strings and nested byte arrays.  
-> * Static analysis AST linting rules (relegated to future tooling pipelines).
-
-## **5\. Step-by-Step Implementation Roadmap**
-
-| Timeline | Phase Focus | Key Tasks & Technical Milestones |
-| :---- | :---- | :---- |
-| **Hours 00–12** | Core Stubbing & Architecture | Initialize \#\!\[no\_std\] crate; implement symbolic stubs for read\_args, write\_result, msg\_sender, and storage primitives using kani::any().  |
-| **Hours 12–24** | Symbolic Storage Engine | Implement bounded symbolic storage mapping supporting EVM slot key hashing; verify that storage writes and reads preserve symbolic dependencies.  |
-| **Hours 24–36** | Harness Construction & ERC-20 Proofs | Implement OpenZeppelin Stylus ERC-20 proof harnesses; assert balance conservation and access control constraints; verify proof convergence in Kani.  |
-| **Hours 36–48** | Defect Validation & Documentation | Inject intentional overflow and access control flaws; verify counterexample generation; package code, CLI execution script, demo video, and grant proposal draft.  |
-
-## **6\. Ecosystem Alignment and Grant Trajectory**
-
-### **Strategic Importance to Arbitrum**
-
-Formal verification is standard practice for high-value EVM smart contracts but is a critical missing link for Arbitrum Stylus. By enabling native formal verification for Rust smart contracts, kani-stylus directly reduces the security barrier preventing established Ethereum and Solana protocols from deploying mission-critical infrastructure to Arbitrum.
-
-### **Grant Alignment**
-
-> * **Arbitrum Stylus Sprint (RFP Category C: "Enhanced Debugging Workflows and Tooling"):** The project satisfies the mandate to deliver advanced debugging and security verification tooling for Stylus smart contracts.
-
-> * **Arbitrum DAO Domain Allocator Offerings (Developer Tooling Track):** Questbook-managed grant tracks provide up to $25,000 to $50,000 USDC for open-source developer tooling and testing infrastructure.
-
-### **Long-Term Post-Hackathon Roadmap**
-
-> 1. **Phase 1 (Months 1–2):** Add support for symbolic cross-contract calls and reentrancy property proofs.
-
-> 2. **Phase 2 (Months 3–4):** Build verification harnesses for storage layout compatibility between Solidity proxy contracts and Stylus logic implementations.
-
-> 3. **Phase 3 (Months 5–6):** Package the verification suite as a GitHub Actions CI workflow for continuous automated verification of Stylus repositories on every pull request.  
+*This replaces the 2026-09-08 draft, which assumed an older SDK in which the
+host was reached through raw `extern "C"` calls. The draft is in git history
+(`git show 9bcfbab:proposal.md`), and what it got wrong is recorded in
+[kb/50-feasibility.md](kb/50-feasibility.md).*
