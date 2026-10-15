@@ -133,7 +133,7 @@ pub mod slots;
 pub mod storage;
 
 #[cfg(kani)]
-pub use arith::{any_uint, div_rem_spec, split, ueq, ult, widen, wrapping_div_stub};
+pub use arith::{ueq, ult, wrapping_div_stub, wrapping_rem_stub};
 #[cfg(kani)]
 pub use context::{any_address, any_u256, Context};
 #[cfg(kani)]

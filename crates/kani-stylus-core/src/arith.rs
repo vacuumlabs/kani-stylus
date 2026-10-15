@@ -34,10 +34,11 @@
 //! fn my_property() { /* ... */ }
 //! ```
 //!
-//! `/` and `%` both lower to `wrapping_div` — `impl_bin_op!(Div, div,
-//! DivAssign, div_assign, wrapping_div)`. Do **not** try to stub `div_rem`
-//! instead: it is `#[inline(always)]`, so Kani silently fails to replace it and
-//! the proof hangs exactly as if no stub were applied.
+//! `/` lowers to `wrapping_div` and `%` to `wrapping_rem` — two separate
+//! `impl_bin_op!` lines in ruint's `div.rs` — so a contract using both needs
+//! [`wrapping_div_stub`] and [`wrapping_rem_stub`]. Do **not** try to stub
+//! `div_rem` instead: it is `#[inline(always)]`, so Kani silently fails to
+//! replace it and the proof hangs exactly as if no stub were applied.
 //!
 //! Stubs are per-harness and forgetting one does not error, it hangs. If a
 //! harness runs away with `trim_end_zeros` or `cmp` climbing in the log, a stub
@@ -105,7 +106,7 @@ pub fn ult<const BITS: usize, const LIMBS: usize>(
 /// exactly 8 limbs, so `U512 * U512` takes ruint's fast, statically bounded
 /// `addmul_n_small` path. One limb more and it would fall back to the
 /// slice-based `addmul` that caused the whole problem.
-pub fn widen<const BITS: usize, const LIMBS: usize>(x: Uint<BITS, LIMBS>) -> Uint<512, 8> {
+fn widen<const BITS: usize, const LIMBS: usize>(x: Uint<BITS, LIMBS>) -> Uint<512, 8> {
     const { assert!(LIMBS <= 8, "widen: only Uints up to 512 bits fit in a Uint<512, 8>") };
     let mut l = [0u64; 8];
     let xl = x.as_limbs();
@@ -118,7 +119,7 @@ pub fn widen<const BITS: usize, const LIMBS: usize>(x: Uint<BITS, LIMBS>) -> Uin
 }
 
 /// Narrow a 512-bit value to `(low BITS bits, whether anything was lost)`.
-pub fn split<const BITS: usize, const LIMBS: usize>(
+fn split<const BITS: usize, const LIMBS: usize>(
     w: Uint<512, 8>,
 ) -> (Uint<BITS, LIMBS>, bool) {
     let wl = w.as_limbs();
@@ -154,16 +155,15 @@ pub fn split<const BITS: usize, const LIMBS: usize>(
 /// masking constructor. An unconstrained draw trips that for widths which are
 /// not a multiple of 64 (`uint96`, `uint160`); the assumption below is free at
 /// 256.
-pub fn any_uint<const BITS: usize, const LIMBS: usize>() -> Uint<BITS, LIMBS> {
+fn any_uint<const BITS: usize, const LIMBS: usize>() -> Uint<BITS, LIMBS> {
     let limbs: [u64; LIMBS] = kani::any();
     kani::assume(limbs[LIMBS - 1] <= Uint::<BITS, LIMBS>::MASK);
     Uint::from_limbs(limbs)
 }
 
 /// What division *means*: a nondeterministic witness constrained to be the
-/// unique quotient and remainder. No log, no lemmas. Every stub here builds on
-/// it.
-pub fn div_rem_spec<const BITS: usize, const LIMBS: usize>(
+/// unique quotient and remainder. Both stubs below are thin wrappers over it.
+fn div_rem_spec<const BITS: usize, const LIMBS: usize>(
     a: Uint<BITS, LIMBS>,
     b: Uint<BITS, LIMBS>,
 ) -> (Uint<BITS, LIMBS>, Uint<BITS, LIMBS>) {
@@ -187,11 +187,19 @@ pub fn div_rem_spec<const BITS: usize, const LIMBS: usize>(
     (q, r)
 }
 
-/// Stub for `ruint::Uint::wrapping_div`.
+/// Stub for `ruint::Uint::wrapping_div`, which is what `/` lowers to.
 pub fn wrapping_div_stub<const BITS: usize, const LIMBS: usize>(
     a: Uint<BITS, LIMBS>,
     b: Uint<BITS, LIMBS>,
 ) -> Uint<BITS, LIMBS> {
     div_rem_spec(a, b).0
+}
+
+/// Stub for `ruint::Uint::wrapping_rem`, which is what `%` lowers to.
+pub fn wrapping_rem_stub<const BITS: usize, const LIMBS: usize>(
+    a: Uint<BITS, LIMBS>,
+    b: Uint<BITS, LIMBS>,
+) -> Uint<BITS, LIMBS> {
+    div_rem_spec(a, b).1
 }
 

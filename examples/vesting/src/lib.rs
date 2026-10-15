@@ -394,19 +394,13 @@ compile_error!("proofs need the `proofs` feature: cargo kani --features proofs")
 #[cfg(kani)]
 mod proofs {
     use super::*;
-    // The `wrapping_div_stub*` family is named by full path in the
-    // `#[kani::stub(..)]` attributes, so it needs no import here.
+    // The division stubs are named by full path in the `#[kani::stub(..)]`
+    // attributes, so they need no import here.
     use kani_stylus_core::{any_u256, ueq, ult, SymbolicVM, SymbolicVm};
 
     use kani_stylus_core::Context;
 
     use ruint::Uint;
-
-    // Both `assume_no_mul_overflow*` helpers and the local bit-precise
-    // `overflowing_mul_stub` are gone. Every overflow assumption they existed
-    // for now lives in `initialize`, which the harnesses call instead of seeding
-    // storage, and the one `should_panic` harness that needed an exact overflow
-    // flag no longer does -- `assume(created.is_ok())` pins the oracle's.
 
     fn div_stub_always_zero<const BITS: usize, const LIMBS: usize>(
         _a: Uint<BITS, LIMBS>, _b: Uint<BITS, LIMBS>,
@@ -499,12 +493,6 @@ mod proofs {
         assert_eq!(v.total(), U256::ZERO);
     }
 
-    /// The two schedule checks reject what they are there to reject, and the
-    /// contract stays untouched.
-    ///
-    /// Without this they would be exercised only incidentally — every other
-    /// harness either supplies parameters that pass them or assumes success —
-    /// so a guard that stopped firing would leave the suite green.
     /// DELIBERATE DEFECT 1, demonstrated.
     ///
     /// `vested_amount_unchecked` computes `start + duration` without checking,
@@ -547,6 +535,12 @@ mod proofs {
         core::hint::black_box(v.vested_amount_unchecked(t));
     }
 
+    /// The two schedule checks reject what they are there to reject, and the
+    /// contract stays untouched.
+    ///
+    /// Without this they would be exercised only incidentally — every other
+    /// harness either supplies parameters that pass them or assumes success —
+    /// so a guard that stopped firing would leave the suite green.
     #[kani::proof]
     #[kani::stub(ruint::Uint::overflowing_mul, kani_stylus_core::arith_oracle::overflowing_mul_stub)]
     fn initialize_rejects_an_unworkable_schedule() {
@@ -709,8 +703,8 @@ mod proofs {
 
     /// The vested amount never goes backwards: for *every* pair of instants
     /// `t1 <= t2`, before the start, during the schedule and after its end, with
-    /// every parameter symbolic and `total` up to 2^192, through the contract's
-    /// own storage.
+    /// every parameter symbolic and `total` bounded only by what `initialize`
+    /// accepts, through the contract's own storage.
     ///
     /// Bit-precise this does not converge -- it rests on `*` and `/` being
     /// monotone, which a SAT solver would have to rediscover at 256 bits. With
@@ -841,8 +835,6 @@ mod proofs {
         assert_eq!(first, after_first, "released did not match the first payout");
         assert_eq!(second, U256::ZERO, "the second call paid out again");
         assert_eq!(v.released(), after_first, "released moved on the second call");
-        //kani::cover!(vm.slots_touched() == 3);   // total, released, packed uint64 word
-
     }
 
     #[kani::proof]
@@ -869,10 +861,8 @@ mod proofs {
         let vm1 = SymbolicVm::<4>::with_context(ctx);
         let mut v1 = Vesting::from(&vm1);
 
-        // Through `initialize` like every other harness: it carries both
-        // schedule guards, and it sets `last_claim` to `start`, which this used
-        // to seed by hand. The two overflow assumptions it replaces were the
-        // last callers of `assume_no_mul_overflow`.
+        // `initialize` carries both schedule guards and sets `last_claim` to
+        // `start`, which is the pre-state this harness needs.
         let created = v1.initialize(Address::from([1u8; 20]), total, start, duration);
         kani::assume(created.is_ok());
         kani::assume(t2 <= start + duration);         // safe: the schedule end exists
@@ -894,8 +884,8 @@ mod proofs {
     /// `released` is exactly what the schedule says has vested.
     ///
     /// Two divisions at the same instant — one inside `release`, one in the
-    /// assertion — so this needs only the memo's determinism, never a fact
-    /// relating different products.
+    /// assertion — so this needs only that identical operands give identical
+    /// quotients, never a fact relating different products.
     #[kani::proof]
     #[kani::stub(ruint::Uint::wrapping_mul, kani_stylus_core::arith_oracle::mul_stub)]
     #[kani::stub(ruint::Uint::wrapping_div, kani_stylus_core::arith_oracle::div_stub)]
@@ -927,9 +917,9 @@ mod proofs {
     /// paths agree exactly. `drifting_release_loses_value` shows them diverging
     /// once a second claim happens; neither harness says it alone.
     ///
-    /// `last_claim` is seeded to `start`, which is what `initialize` guarantees,
-    /// so both paths divide `total * (now - start)` by `duration` — identical
-    /// operands, and the memo applies.
+    /// `initialize` sets `last_claim` to `start`, so both paths divide
+    /// `total * (now - start)` by `duration` — identical operands, which is all
+    /// the oracle needs to make the two quotients equal.
     #[kani::proof]
     #[kani::stub(ruint::Uint::wrapping_mul, kani_stylus_core::arith_oracle::mul_stub)]
     #[kani::stub(ruint::Uint::wrapping_div, kani_stylus_core::arith_oracle::div_stub)]
@@ -946,10 +936,7 @@ mod proofs {
         kani::assume(duration > 0);
         let total = any_u256();
 
-        // See `vested_never_exceeds_total`: `initialize` carries both guards now.
-        // It also sets `last_claim` to `start`, which this harness used to seed
-        // by hand under a comment saying "what `initialize` guarantees" -- now
-        // it is guaranteed rather than asserted.
+        // See `vested_never_exceeds_total`: `initialize` carries both guards.
         let created = v.initialize(Address::from([1u8; 20]), total, start, duration);
         kani::assume(created.is_ok());
 
