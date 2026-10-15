@@ -1,17 +1,12 @@
 //! `U256` division, modelled by its specification rather than its algorithm.
 //!
-//! Nothing in a Stylus contract divides more than a handful of times, but a
-//! single `U256` division is enough to make a proof hopeless. `ruint`'s
+//! A single `U256` division is enough to make a proof hopeless. `ruint`'s
 //! `div_rem` works over `&[u64]` slices whose lengths come from the divisor's
-//! leading zeros, so CBMC cannot bound its loops: symbolic execution runs away
-//! before any solver is involved. Measured, a bare `U256` division with no
-//! unwind bound produced **no formula at all in 30 minutes**, sitting at
-//! iteration 2299 of `ruint::algorithms::cmp`.
-//!
-//! Loop bounds do not fix it. `#[kani::unwind(5)]` truncates `memcmp`, which
-//! `Address` comparison needs at 33; `#[kani::unwind(33)]` exhausts 23 GiB,
-//! because the division's loops nest. Per-loop `--unwindset` is whack-a-mole —
-//! bounding `cmp` merely moves the problem to `slice::fill`.
+//! leading zeros, so CBMC cannot bound its loops — symbolic execution runs away
+//! before any solver is involved, measured at no formula produced in 30
+//! minutes. Loop bounds do not fix it: `unwind(5)` truncates the `memcmp` that
+//! `Address` comparison needs at 33, `unwind(33)` exhausts 23 GiB because the
+//! loops nest, and per-loop `--unwindset` is whack-a-mole.
 //!
 //! So this stub replaces division with what division *means*:
 //!
@@ -20,44 +15,22 @@
 //! ```
 //!
 //! evaluated at 512 bits, where `q*b` cannot overflow. Those constraints pin
-//! `q` and `r` uniquely, and **no unwind bound is needed anywhere**.
-//!
-//! [`wrapping_div_stub`] supplies no *relational* fact about different
-//! dividends. A property that needs one — monotonicity, `x * y / z <= x` —
-//! belongs on [`oracle`](crate::arith::oracle) instead, which drops
-//! exactness to buy those facts cheaply. This module keeps division exact, so
-//! every counterexample it produces is real; that is what it is for.
+//! `q` and `r` uniquely, and **no unwind bound is needed anywhere**. What they
+//! do not give is any *relational* fact about two different divisions — see
+//! [`arith`](crate::arith) for when that means you want the oracle instead.
 //!
 //! ```ignore
 //! #[kani::proof]
-//! #[kani::stub(ruint::Uint::wrapping_div, kani_stylus_core::wrapping_div_stub)]
+//! #[kani::stub(ruint::Uint::wrapping_div, kani_stylus_core::arith::exact::wrapping_div_stub)]
 //! fn my_property() { /* ... */ }
 //! ```
 //!
 //! `/` lowers to `wrapping_div` and `%` to `wrapping_rem` — two separate
 //! `impl_bin_op!` lines in ruint's `div.rs` — so a contract using both needs
-//! [`wrapping_div_stub`] and [`wrapping_rem_stub`]. Do **not** try to stub
-//! `div_rem` instead: it is `#[inline(always)]`, so Kani silently fails to
-//! replace it and the proof hangs exactly as if no stub were applied.
-//!
-//! Stubs are per-harness and forgetting one does not error, it hangs. If a
-//! harness runs away with `trim_end_zeros` or `cmp` climbing in the log, a stub
-//! attribute is missing — that is the signature.
-//!
-//! # Why the monotonicity lemma is sound
-//!
-//! For two divisions with the same divisor, `a <= a' ==> q <= q'`. If `q > q'`
-//! then `q >= q'+1`, so `a = q*b + r >= (q'+1)*b = q'*b + b > q'*b + r' = a'`,
-//! using `r' < b`. The contrapositive is the claim.
-//!
-//! It is therefore *entailed* by the constraints above, which already pin `q`
-//! uniquely — it removes no models and cannot make a proof vacuous. What it
-//! buys is an inference CBMC cannot reach unaided: the same statement at
-//! primitive `u64` width, with no contract and no stub, is ten verification
-//! conditions and does not converge in five minutes.
-//!
-//! Note the direction. These are two implications, **not** a biconditional:
-//! `q <= q'` does not imply `a <= a'` (take `a = 3`, `a' = 2`, `b = 2`).
+//! both stubs. Do **not** stub `div_rem` instead: it is `#[inline(always)]`, so
+//! Kani silently fails to replace it and the proof hangs exactly as if no stub
+//! were applied. Forgetting a stub does not error, it hangs; `trim_end_zeros`
+//! or `cmp` climbing in the log is the signature.
 
 use ruint::Uint;
 

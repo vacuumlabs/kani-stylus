@@ -46,16 +46,10 @@ contract-client-gen = []
 
 # Verification only: `cargo kani --features proofs -Z stubbing`.
 #
-# `-Z stubbing` is required. Not for keccak, as in the vault — this contract has
-# no mappings — but because every harness reaching the vesting formula replaces
-# `ruint::Uint::wrapping_div` with a stub from `kani-stylus-core`, a symbolic
-# `U256` division being otherwise enough to make a proof diverge.
-#
 # Off by default. `stylus-test` swaps the real ArbOS host calls for a mockable
 # one -- with it enabled every hostio becomes a `panic!`, so a contract built
 # this way would be broken on chain.
 proofs = ["dep:kani-stylus-core", "dep:ruint", "stylus-sdk/stylus-test"]
-slow-proofs = ["proofs"]
 
 [profile.release]
 codegen-units = 1

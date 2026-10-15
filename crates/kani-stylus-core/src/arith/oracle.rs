@@ -15,20 +15,10 @@
 //! The solver then only ever compares opaque 256-bit values, which is cheap.
 //! Certora and hevm do the same for Solidity; see `kb/35-arithmetic-oracle.md`.
 //!
-//! # This or [`arith`](crate::arith)?
-//!
-//! [`arith`](crate::arith) models division *exactly*, by its specification.
-//! Every counterexample it produces is real, but a proof that needs a
-//! nonlinear fact — monotonicity, `x * y / z <= x` — is as expensive as ever.
-//! This module is the other trade: such proofs become cheap, and a
-//! counterexample may be spurious.
-//!
-//! - **Proving a property** that rests on how `*` and `/` behave: this module.
-//! - **Demonstrating a bug**, and any `#[kani::should_panic]` harness: [`arith`](crate::arith).
-//!   A `should_panic` harness passes on *any* panic, so a spurious
-//!   counterexample would pass it for the wrong reason.
-//! - **Neither needed**, because the property never divides by a symbolic
-//!   value or relates two products: leave the arithmetic alone.
+//! [`arith`](crate::arith) has the choice between this module and
+//! [`exact`](crate::arith::exact), which is the one to make first. In short: a
+//! counterexample from here may be spurious, so never use it for a
+//! `#[kani::should_panic]` harness, which passes on *any* panic.
 //!
 //! # Usage
 //!
@@ -95,12 +85,10 @@
 //!   invent a product no real multiplication gives — it does not even know that
 //!   `3 * 5 == 15`. Replay a counterexample on real arithmetic before calling it
 //!   a bug. If it does not reproduce, a lemma is missing; the contract is fine.
-//! - **Bounded, but never vacuous.** The oracle records up to [`MAX_OPS`]
-//!   multiplications and as many divisions. Operations beyond that still get
-//!   every lemma, against every recorded operation, but are not recorded
-//!   themselves, so later operations cannot be related to them. That only
-//!   drops true facts: it can make a proof fail spuriously, but it never
-//!   prunes a path and never panics.
+//! - **Bounded, and loudly.** The oracle records up to [`MAX_OPS`]
+//!   multiplications and as many divisions, and panics past either. Silently
+//!   dropping records would weaken every later lemma with no sign of why —
+//!   raise the bound instead.
 //! - **`U256` only.** A stub replaces the function at *every* width, so a proof
 //!   that reaches `*` or `/` on any other `Uint` fails to compile rather than
 //!   being silently modelled as 256-bit.
@@ -110,7 +98,7 @@ use alloy_primitives::U256;
 use ruint::Uint;
 
 /// Multiplications, and separately divisions, the oracle records per proof.
-/// See "Bounded, but never vacuous" above for what happens past it.
+/// Exceeding either panics.
 pub const MAX_OPS: usize = 8;
 
 /// One recorded operation: `r == a * b`, or `r == a / b`. `overflowed` says
