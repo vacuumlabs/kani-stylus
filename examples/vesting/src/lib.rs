@@ -969,76 +969,14 @@ mod proofs {
     /// contract's own methods — `release` only ever adds what `releasable` just
     /// returned — but reachable from seeded pre-state, which is exactly how a
     /// proof sets things up, and OpenZeppelin leans on the same invariant.
-    #[kani::proof]
-    // The full oracle, which a `should_panic` harness can normally not use --
-    // a fabricated value would satisfy it for the wrong reason. It is safe here
-    // because of *what* panics: the defect is a wrapped `-`, and subtraction is
-    // not stubbed. The assertion turns on `released > vested_now`, which the
-    // harness assumes outright, so it never depends on `vested_now` being a
-    // real vested amount. That also lets `total` be symbolic, matching the
-    // companion harness below.
-    #[kani::stub(ruint::Uint::wrapping_mul, kani_stylus_core::arith_oracle::mul_stub)]
-    #[kani::stub(ruint::Uint::wrapping_div, kani_stylus_core::arith_oracle::div_stub)]
-    #[kani::stub(ruint::Uint::overflowing_mul, kani_stylus_core::arith_oracle::overflowing_mul_stub)]
-    #[kani::should_panic]
-    fn releasable_wraps_when_released_exceeds_vested() {
-        let now: u64 = kani::any();
-        let mut ctx = Context::concrete();
-        ctx.block_timestamp = now;
-        let vm = SymbolicVm::<3>::with_context(ctx);
-        let mut v = Vesting::from(&vm);
-
-        let start: u64 = kani::any();
-        let duration: u64 = kani::any();
-        kani::assume(duration > 0);
-        kani::assume(start.checked_add(duration).is_some());   // defect 1 guard
-        let total = any_u256();
-        kani::assume(total.checked_mul(U256::from(duration)).is_some());   // defect 2 guard
-        // Only for symmetry with `releasable_wraps_catastrophically`, which does
-        // need it. This harness would pass without it; the setups have to match
-        // for it to certify that the companion's is reachable.
-        kani::assume(total <= U256::MAX >> 1);
-
-        v.start.set(U64::from(start));
-        v.duration.set(U64::from(duration));
-        v.total.set(total);
-
-        // Seed a state the contract cannot reach on its own: more released than
-        // has vested, by at most the whole entitlement.
-        //
-        // The bound on the excess matches `releasable_wraps_catastrophically`
-        // below, and the two must stay in step: this harness is what certifies
-        // that their shared setup is satisfiable at all. A `should_panic`
-        // harness fails outright if its assumptions are contradictory, where a
-        // positive one would pass vacuously and say nothing.
-        let vested_now = v.vested_amount(now);
-        let released = any_u256();
-        kani::assume(released > vested_now);
-        kani::assume(released - vested_now <= total);
-        v.released.set(released);
-
-        // Wraps to something near 2^256, so it cannot be within the schedule.
-        assert!(v.releasable() <= total, "releasable exceeded the total -- the bare `-` wrapped");
-    }
-
-    /// The same defect, stated as what *does* happen rather than as a property
-    /// that fails.
     ///
-    /// Companion to `releasable_wraps_when_released_exceeds_vested`, with the
-    /// identical setup. Each covers the other's blind spot: a `should_panic`
-    /// harness passes on *any* panic but fails if its assumptions are
-    /// contradictory, while this one names the exact outcome but would pass
-    /// vacuously if they were. Keep the two setups in step.
-    ///
-    /// Bounding the excess by `total` is what makes the defect universal rather
-    /// than existential. With `released` drawn freely the wrap lands anywhere in
-    /// `[0, 2^256)` — take `vested_now == 0` and `released == U256::MAX` and
-    /// `releasable()` comes back as `1`, which is within the schedule and proves
-    /// nothing. A realistic over-release of at most one entitlement always wraps
-    /// to at least `2^256 - total`, which is the case worth showing.
-    ///
-    /// Being a plain proof rather than a `should_panic` one, it can use the
-    /// oracle and so quantify over every `total`, which the other cannot.
+    /// Bounding the excess by `total` is what makes the defect universal, so it
+    /// can be asserted outright rather than through `should_panic`. With
+    /// `released` drawn freely the wrap lands anywhere in `[0, 2^256)` — take
+    /// `vested_now == 0` and `released == U256::MAX` and `releasable()` comes
+    /// back as `1`, which is within the schedule and proves nothing. A realistic
+    /// over-release of at most one entitlement always wraps to at least
+    /// `2^256 - total`, which is the case worth showing.
     #[kani::proof]
     #[kani::stub(ruint::Uint::wrapping_mul, kani_stylus_core::arith_oracle::mul_stub)]
     #[kani::stub(ruint::Uint::wrapping_div, kani_stylus_core::arith_oracle::div_stub)]
@@ -1067,13 +1005,14 @@ mod proofs {
         v.duration.set(U64::from(duration));
         v.total.set(total);
 
-        // Identical to the harness above, which pins `total` instead; the
-        // assumptions about `released` are what the two must keep in step.
+        // Seed a state the contract cannot reach on its own: more released than
+        // has vested, by at most the whole entitlement.
         let vested_now = v.vested_amount(now);
         let released = any_u256();
         kani::assume(released > vested_now);
         kani::assume(released - vested_now <= total);
         v.released.set(released);
+        kani::cover!(released > vested_now, "the over-released state is reachable");
 
         // `vested_now - released` wraps to `2^256 - (released - vested_now)`,
         // and the excess is at most `total`, so the result is at least

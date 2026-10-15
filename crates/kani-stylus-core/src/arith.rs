@@ -13,7 +13,7 @@
 //! because the division's loops nest. Per-loop `--unwindset` is whack-a-mole —
 //! bounding `cmp` merely moves the problem to `slice::fill`.
 //!
-//! So these stubs replace division with what division *means*:
+//! So this stub replaces division with what division *means*:
 //!
 //! ```text
 //!     q, r drawn freely;  r < b;  a == q*b + r
@@ -22,18 +22,11 @@
 //! evaluated at 512 bits, where `q*b` cannot overflow. Those constraints pin
 //! `q` and `r` uniquely, and **no unwind bound is needed anywhere**.
 //!
-//! # Choosing a stub
-//!
-//! | stub | adds | use when |
-//! | --- | --- | --- |
-//! | [`wrapping_div_stub`] | nothing | almost always — this is the default |
-//! | [`wrapping_div_stub_memo`] | repeated identical divisions share one witness | a harness divides twice with the *same* operands |
-//!
-//! Neither supplies a *relational* fact about different dividends. A property
-//! that needs one — monotonicity, `x * y / z <= x` — belongs on
-//! [`arith_oracle`](crate::arith_oracle) instead, which drops exactness to buy
-//! those facts cheaply. This module keeps division exact, so every
-//! counterexample it produces is real; that is what it is for.
+//! [`wrapping_div_stub`] supplies no *relational* fact about different
+//! dividends. A property that needs one — monotonicity, `x * y / z <= x` —
+//! belongs on [`arith_oracle`](crate::arith_oracle) instead, which drops
+//! exactness to buy those facts cheaply. This module keeps division exact, so
+//! every counterexample it produces is real; that is what it is for.
 //!
 //! ```ignore
 //! #[kani::proof]
@@ -64,17 +57,6 @@
 //!
 //! Note the direction. These are two implications, **not** a biconditional:
 //! `q <= q'` does not imply `a <= a'` (take `a = 3`, `a' = 2`, `b = 2`).
-//!
-//! # If the memo does not seem to be helping
-//!
-//! [`wrapping_div_stub_memo`] only pays off when CBMC can see that two calls
-//! have identical operands. Values that round-trip through storage between the
-//! calls may not compare equal structurally, in which case the lookup stays
-//! symbolic and the second division builds its own multiplier anyway. To check,
-//! add a counter on the hit path in [`div_rem_memo`] and
-//! `kani::cover!` the expected value from your harness — a satisfied cover
-//! means the memo fires. It is not instrumented permanently because the counter
-//! costs formula size on every division.
 
 use ruint::Uint;
 
@@ -205,81 +187,11 @@ pub fn div_rem_spec<const BITS: usize, const LIMBS: usize>(
     (q, r)
 }
 
-/// How many divisions the log relates.
-///
-/// Purely a performance knob: truncating the log only ever drops an assumption,
-/// and every assumption it adds is entailed, so a too-small value can cost
-/// convergence but never soundness. Exceeding it panics rather than silently
-/// dropping entries — a proof needing more should raise this.
-pub const MAX_DIVS: usize = 4;
-
-/// Widened record of the divisions performed so far: `(a, b, q, r)`.
-///
-/// 512 bits rather than `Uint<BITS, LIMBS>` because an item inside a generic
-/// function cannot name the enclosing generic parameters. Widening is injective
-/// and order-preserving, so one table serves every width — a `U64` division and
-/// a `U256` division can share it harmlessly.
-static mut DIV_LOG: [(Uint<512, 8>, Uint<512, 8>, Uint<512, 8>, Uint<512, 8>); MAX_DIVS] =
-    [(Uint::ZERO, Uint::ZERO, Uint::ZERO, Uint::ZERO); MAX_DIVS];
-static mut DIV_COUNT: usize = 0;
-
-/// Record a division for later lookup.
-fn log_division(wa: Uint<512, 8>, wb: Uint<512, 8>, wq: Uint<512, 8>, wr: Uint<512, 8>) {
-    unsafe {
-        let log = core::ptr::addr_of_mut!(DIV_LOG);
-        let cnt = core::ptr::addr_of_mut!(DIV_COUNT);
-        let n = *cnt;
-        if n < MAX_DIVS {
-            (*log)[n] = (wa, wb, wq, wr);
-            *cnt = n + 1;
-        } else {
-            panic!("division log full: raise MAX_DIVS");
-        }
-    }
-}
-
-/// Repeated divisions with identical operands share one witness, instead of
-/// each building its own 512-bit multiplier.
-pub fn div_rem_memo<const BITS: usize, const LIMBS: usize>(
-    a: Uint<BITS, LIMBS>,
-    b: Uint<BITS, LIMBS>,
-) -> (Uint<BITS, LIMBS>, Uint<BITS, LIMBS>) {
-    let (wa, wb) = (widen(a), widen(b));
-    unsafe {
-        let log = core::ptr::addr_of_mut!(DIV_LOG);
-        let n = *core::ptr::addr_of_mut!(DIV_COUNT);
-        let mut i = 0;
-        while i < MAX_DIVS {
-            if i < n {
-                let (pa, pb, pq, pr) = (*log)[i];
-                if ueq(&pa, &wa) && ueq(&pb, &wb) {
-                    // A hit implies `b` was already checked non-zero when this
-                    // entry was logged, so skipping `div_rem_spec`'s
-                    // divide-by-zero assertion here is sound.
-                    return (split::<BITS, LIMBS>(pq).0, split::<BITS, LIMBS>(pr).0);
-                }
-            }
-            i += 1;
-        }
-    }
-    let (q, r) = div_rem_spec(a, b);
-    log_division(wa, wb, widen(q), widen(r));
-    (q, r)
-}
-
-/// Plain division. Cheapest: no log, no lemmas. The default.
+/// Stub for `ruint::Uint::wrapping_div`.
 pub fn wrapping_div_stub<const BITS: usize, const LIMBS: usize>(
     a: Uint<BITS, LIMBS>,
     b: Uint<BITS, LIMBS>,
 ) -> Uint<BITS, LIMBS> {
     div_rem_spec(a, b).0
-}
-
-/// Memoising: repeated divisions with identical operands share one witness.
-pub fn wrapping_div_stub_memo<const BITS: usize, const LIMBS: usize>(
-    a: Uint<BITS, LIMBS>,
-    b: Uint<BITS, LIMBS>,
-) -> Uint<BITS, LIMBS> {
-    div_rem_memo::<BITS, LIMBS>(a, b).0
 }
 
