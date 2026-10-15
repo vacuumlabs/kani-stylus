@@ -9,8 +9,8 @@
 //!
 //! There is one context per proof, held globally like storage, so that the
 //! host can be zero-sized — see [`SymbolicVm`](crate::SymbolicVm). Changing it
-//! between calls, with `with_sender` or `with_timestamp`, models the next
-//! transaction: every handle sees the change.
+//! between calls, with `set_timestamp`, models the next transaction: every
+//! handle sees the change, contracts built earlier included.
 
 use alloy_primitives::{Address, U256};
 

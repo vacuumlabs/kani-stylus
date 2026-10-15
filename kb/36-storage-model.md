@@ -103,9 +103,9 @@ are statics, as the keccak and arithmetic oracles already were. Kani gives
 every harness its own program, so each proof starts from empty state.
 
 The cost is one chain state per proof. A second `SymbolicVm::new()` fails the
-proof; handles made by cloning or by `with_timestamp` share storage, and
-changing the context changes it for every handle — which is the next
-transaction, as on chain. No existing harness built two VMs.
+proof; handles made by cloning share storage, and changing the context with
+`set_timestamp` changes it for every handle, contracts built earlier included —
+which is the next transaction, as on chain. No existing harness built two VMs.
 
 ### A two-tier store (encoding)
 

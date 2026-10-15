@@ -858,24 +858,23 @@ mod proofs {
 
         let mut ctx = Context::concrete();
         ctx.block_timestamp = t1;
-        let vm1 = SymbolicVm::<4>::with_context(ctx);
-        let mut v1 = Vesting::from(&vm1);
+        let vm = SymbolicVm::<4>::with_context(ctx);
+        let mut v = Vesting::from(&vm);
 
         // `initialize` carries both schedule guards and sets `last_claim` to
         // `start`, which is the pre-state this harness needs.
-        let created = v1.initialize(Address::from([1u8; 20]), total, start, duration);
+        let created = v.initialize(Address::from([1u8; 20]), total, start, duration);
         kani::assume(created.is_ok());
         kani::assume(t2 <= start + duration);         // safe: the schedule end exists
 
-        v1.release_drifting();
+        v.release_drifting();
 
-        // Same storage, later clock.
-        let vm2 = vm1.with_timestamp(t2);
-        let mut v2 = Vesting::from(&vm2);
-        v2.release_drifting();
+        // The next transaction: same contract, same storage, later clock.
+        vm.set_timestamp(t2);
+        v.release_drifting();
 
         assert!(
-            v2.released_naive() >= v2.vested_amount(t2),
+            v.released_naive() >= v.vested_amount(t2),
             "drifting kept up with the schedule"
         );
     }
@@ -1038,13 +1037,13 @@ mod proofs {
         let later: u64 = kani::any();
         kani::assume(now <= later);
 
-        core::hint::black_box(v.release());
+        v.release();
 
-        let vm2 = vm.with_timestamp(later);
-        let mut v2 = Vesting::from(&vm2);
-        core::hint::black_box(v2.release());
+        // The next transaction: same contract, later clock.
+        vm.set_timestamp(later);
+        v.release();
 
-        assert!(v2.released() <= total, "released exceeded the total");
+        assert!(v.released() <= total, "released exceeded the total");
     }
 
     /// The invariant that keeps DELIBERATE DEFECT 5 out of reach in normal
@@ -1091,12 +1090,11 @@ mod proofs {
         let later: u64 = kani::any();
         kani::assume(now <= later);
 
-        let vm2 = vm.with_timestamp(later);
-        let mut v2 = Vesting::from(&vm2);
-        core::hint::black_box(v2.release());
+        vm.set_timestamp(later);
+        v.release();
 
         assert!(
-            v2.released() <= v2.vested_amount(later),
+            v.released() <= v.vested_amount(later),
             "a claim pushed released past what has vested"
         );
     }

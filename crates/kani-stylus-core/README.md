@@ -104,8 +104,8 @@ all behave exactly as before, because none of them enable `proofs`.
 | `vm.snapshot()` / `vm.slots_changed_since(&s)` | frame conditions — "this call changed nothing else" |
 
 One VM per proof: storage and context are global, which is what makes the host
-cheap. Clone a VM, or use `with_timestamp`/`with_sender`, to get more handles;
-changing the context changes it for all of them — the next transaction.
+cheap. Keep the one handle and move the clock with `vm.set_timestamp(t)` — that
+is the next transaction, and every contract already built sees it.
 
 ## Mappings: declare harnesses with `proof!`
 
