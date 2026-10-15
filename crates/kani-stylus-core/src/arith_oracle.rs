@@ -66,6 +66,26 @@
 //! is conservative. For a claim that something *never* reverts, it can produce a
 //! spurious failure.
 //!
+//! # Picking a stub: core, and decorations
+//!
+//! The core stubs — [`mul_stub`], [`overflowing_mul_stub`], [`div_stub`] —
+//! carry the lemmas essentially every proof needs. A lemma that only some
+//! proofs need lives on a separate, suffixed stub instead, so a proof that
+//! does not need it does not pay for it.
+//!
+//! Today there is one decoration, `_guarded`, adding
+//! [`mul_pair_guard_facts`]: an overflow guard on `a * b` carries to a product
+//! `a * c` with `c <= b`. Reach for it when the contract checks one product and
+//! then multiplies a related, smaller one — `initialize` guarding
+//! `total * duration` while every later call computes `total * elapsed`.
+//!
+//! **The two mul stubs must come from the same family.** They share the record,
+//! so mixing [`mul_stub`] with [`overflowing_mul_stub_guarded`] applies the
+//! extra clause to some multiplications and not others. Every lemma here is
+//! true of real arithmetic, so a mismatch is never unsound — it just leaves a
+//! proof with an arbitrary subset of the facts it was expecting, and that is
+//! indistinguishable from the lemma being too weak.
+//!
 //! # What a result means
 //!
 //! - **A pass is sound**, as long as every lemma is true of real ruint
@@ -138,7 +158,18 @@ pub fn mul_stub<const BITS: usize, const LIMBS: usize>(
     a: Uint<BITS, LIMBS>,
     b: Uint<BITS, LIMBS>,
 ) -> Uint<BITS, LIMBS> {
-    from_u256(record_mul(to_u256(a), to_u256(b)).r)
+    from_u256(record_mul::<false>(to_u256(a), to_u256(b)).r)
+}
+
+/// [`mul_stub`] plus [`mul_pair_guard_facts`]. Pair it with
+/// [`overflowing_mul_stub_guarded`] — the two must carry the same lemma set,
+/// or a proof gets an arbitrary subset of the facts it expects.
+#[cfg(kani)]
+pub fn mul_stub_guarded<const BITS: usize, const LIMBS: usize>(
+    a: Uint<BITS, LIMBS>,
+    b: Uint<BITS, LIMBS>,
+) -> Uint<BITS, LIMBS> {
+    from_u256(record_mul::<true>(to_u256(a), to_u256(b)).r)
 }
 
 /// Drop-in replacement for `ruint::Uint::overflowing_mul`, which `checked_mul`
@@ -149,13 +180,27 @@ pub fn overflowing_mul_stub<const BITS: usize, const LIMBS: usize>(
     a: Uint<BITS, LIMBS>,
     b: Uint<BITS, LIMBS>,
 ) -> (Uint<BITS, LIMBS>, bool) {
-    let m = record_mul(to_u256(a), to_u256(b));
+    let m = record_mul::<false>(to_u256(a), to_u256(b));
+    (from_u256(m.r), m.overflowed)
+}
+
+/// [`overflowing_mul_stub`] plus [`mul_pair_guard_facts`], to pair with
+/// [`mul_stub_guarded`].
+#[cfg(kani)]
+pub fn overflowing_mul_stub_guarded<const BITS: usize, const LIMBS: usize>(
+    a: Uint<BITS, LIMBS>,
+    b: Uint<BITS, LIMBS>,
+) -> (Uint<BITS, LIMBS>, bool) {
+    let m = record_mul::<true>(to_u256(a), to_u256(b));
     (from_u256(m.r), m.overflowed)
 }
 
 /// A fresh multiplication, constrained by every lemma and recorded.
+///
+/// `GUARDED` is a const generic so the extra clause is compiled out entirely
+/// for the undecorated stubs, rather than left as a branch in the formula.
 #[cfg(kani)]
-fn record_mul(a: U256, b: U256) -> Op {
+fn record_mul<const GUARDED: bool>(a: U256, b: U256) -> Op {
     let new = Op { a, b, r: U256::from_limbs(kani::any()), overflowed: kani::any() };
     kani::assume(implies(no_wrap(&new.a, &new.b), !new.overflowed));
     kani::assume(mul_facts(&new));
@@ -163,6 +208,12 @@ fn record_mul(a: U256, b: U256) -> Op {
         let mut i = 0;
         while i < o.n_muls {
             kani::assume(mul_pair_facts(&o.muls[i], &new) && mul_pair_facts(&new, &o.muls[i]));
+            if GUARDED {
+                kani::assume(
+                    mul_pair_guard_facts(&o.muls[i], &new)
+                        && mul_pair_guard_facts(&new, &o.muls[i]),
+                );
+            }
             i += 1;
         }
         let mut j = 0;
@@ -170,10 +221,9 @@ fn record_mul(a: U256, b: U256) -> Op {
             kani::assume(mul_div_facts(&new, &o.divs[j]));
             j += 1;
         }
-        if o.n_muls < MAX_OPS {
-            o.muls[o.n_muls] = new;
-            o.n_muls += 1;
-        }
+        assert!(o.n_muls < MAX_OPS, "kani-stylus: more than MAX_OPS multiplications -- raise it");
+        o.muls[o.n_muls] = new;
+        o.n_muls += 1;
     });
     new
 }
@@ -201,10 +251,9 @@ pub fn div_stub<const BITS: usize, const LIMBS: usize>(
             kani::assume(mul_div_facts(&o.muls[j], &new));
             j += 1;
         }
-        if o.n_divs < MAX_OPS {
-            o.divs[o.n_divs] = new;
-            o.n_divs += 1;
-        }
+        assert!(o.n_divs < MAX_OPS, "kani-stylus: more than MAX_OPS divisions -- raise it");
+        o.divs[o.n_divs] = new;
+        o.n_divs += 1;
     });
     from_u256(new.r)
 }
@@ -251,16 +300,30 @@ fn mul_pair_facts(m1: &Op, m2: &Op) -> bool {
     let swapped = eq(&m1.a, &m2.b) && eq(&m1.b, &m2.a);
     let one_operand_grows =
         (eq(&m1.a, &m2.a) && le(&m1.b, &m2.b)) || (eq(&m1.b, &m2.b) && le(&m1.a, &m2.a));
-    // Functional and commutative, in the flag as well as the product.
+    // Functional and commutative, in the flag as well as the product. The flag
+    // half is not optional: without it two calls on the same operands could
+    // disagree about overflow, and the clause below would rest on nothing.
     implies(same || swapped, eq(&m1.r, &m2.r) && m1.overflowed == m2.overflowed)
-        // If the larger product fits, so does the smaller. This is what carries
-        // a guard on `a * b` over to a product `a * c` with `c <= b`.
-        && implies(one_operand_grows && !m2.overflowed, !m1.overflowed)
         // Monotone in each operand, the other held fixed, while neither wraps.
         && implies(
             !m1.overflowed && !m2.overflowed && one_operand_grows,
             le(&m1.r, &m2.r),
         )
+}
+
+/// The `_guarded` decoration: if the larger product fits, so does the smaller.
+///
+/// This is what carries an overflow guard on `a * b` over to a product `a * c`
+/// with `c <= b` — the shape of a contract that checks `total * duration` once
+/// at construction and then multiplies `total * elapsed` on every call. Without
+/// it those are unrelated records and the guard pins the flag on the wrong one.
+///
+/// Separate because a proof that never relates two products pays for it and
+/// gets nothing back.
+fn mul_pair_guard_facts(m1: &Op, m2: &Op) -> bool {
+    let one_operand_grows =
+        (eq(&m1.a, &m2.a) && le(&m1.b, &m2.b)) || (eq(&m1.b, &m2.b) && le(&m1.a, &m2.a));
+    implies(one_operand_grows && !m2.overflowed, !m1.overflowed)
 }
 
 /// `d.r == d.a / d.b`.
@@ -298,7 +361,8 @@ fn mul_div_facts(m: &Op, d: &Op) -> bool {
 /// `a * b` certainly fits in 256 bits: `a < 2^m` and `b < 2^n` give
 /// `a * b < 2^(m + n)`. Sufficient, not necessary — a product can fit with
 /// `m + n = 257` — so it only forces a multiplication's `overflowed` flag to
-/// `false`. The lemmas key on the flag, not on this.
+/// `false`. The lemmas key on the flag, not on this. The simplest case it
+/// cannot see is `1 * b` for `b >= 2^255`, which never wraps but sums to 257.
 fn no_wrap(a: &U256, b: &U256) -> bool {
     bit_len(a) + bit_len(b) <= 256
 }
@@ -455,7 +519,9 @@ mod tests {
         assert!(beyond_no_wrap > ROUNDS / 4, "only {beyond_no_wrap} pairs beyond no_wrap");
     }
 
-    /// Lemma 5b in isolation, against ruint's own flag.
+    /// Shrinking either operand cannot turn a product that fits into one that
+    /// overflows — checked against ruint's own flag. This is what carries an
+    /// overflow guard from one product to a smaller one.
     #[test]
     fn smaller_operand_cannot_overflow() {
         let mut g = Rng(6);
@@ -463,10 +529,16 @@ mod tests {
             let (a, b2) = if i % 2 == 0 { g.boundary_pair() } else { (g.value(), g.value()) };
             let b1 = if b2 == U256::ZERO { b2 } else { g.value() % b2 };
             for (x, y1, y2) in [(a, b1, b2), (a, b1, b2.saturating_add(U256::ONE))] {
-                if !x.overflowing_mul(y2).1 {
-                    assert!(!x.overflowing_mul(y1).1, "{x} * {y1} overflows but {x} * {y2} fits");
-                    assert!(!y1.overflowing_mul(x).1, "{y1} * {x} overflows but {y2} * {x} fits");
-                }
+                // The predicate itself, on records built from real arithmetic:
+                // this is what the stub assumes, so it is what must hold.
+                assert!(
+                    mul_pair_guard_facts(&mul(x, y1), &mul(x, y2)),
+                    "{x} * {y1} overflows but {x} * {y2} fits"
+                );
+                assert!(
+                    mul_pair_guard_facts(&mul(y1, x), &mul(y2, x)),
+                    "{y1} * {x} overflows but {y2} * {x} fits"
+                );
             }
         }
     }
