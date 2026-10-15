@@ -396,7 +396,7 @@ mod proofs {
     use super::*;
     // The division stubs are named by full path in the `#[kani::stub(..)]`
     // attributes, so they need no import here.
-    use kani_stylus_core::{any_u256, ueq, ult, SymbolicVM, SymbolicVm};
+    use kani_stylus_core::{any_u256, ueq, ult, SymbolicVM};
 
     use kani_stylus_core::Context;
 
@@ -457,7 +457,7 @@ mod proofs {
     #[kani::proof]
     #[kani::stub(ruint::Uint::overflowing_mul, kani_stylus_core::arith_oracle::overflowing_mul_stub)]
     fn cannot_reinitialize() {
-        let vm = SymbolicVm::<4>::concrete_ctx();
+        let vm = SymbolicVM::concrete_ctx();
         let mut v = Vesting::from(&vm);
 
         let start: u64 = kani::any();
@@ -484,7 +484,7 @@ mod proofs {
     #[kani::proof]
     #[kani::stub(ruint::Uint::overflowing_mul, kani_stylus_core::arith_oracle::overflowing_mul_stub)]
     fn initialize_rejects_zero_duration() {
-        let vm = SymbolicVm::<4>::concrete_ctx();
+        let vm = SymbolicVM::concrete_ctx();
         let mut v = Vesting::from(&vm);
         let start: u64 = kani::any();
         let total = any_u256();
@@ -515,7 +515,7 @@ mod proofs {
     #[kani::stub(ruint::Uint::wrapping_div, kani_stylus_core::wrapping_div_stub)]
     #[kani::should_panic]
     fn far_future_schedule_overflows() {
-        let vm = SymbolicVm::<4>::concrete_ctx();
+        let vm = SymbolicVM::concrete_ctx();
         let mut v = Vesting::from(&vm);
 
         let start: u64 = kani::any();
@@ -544,7 +544,7 @@ mod proofs {
     #[kani::proof]
     #[kani::stub(ruint::Uint::overflowing_mul, kani_stylus_core::arith_oracle::overflowing_mul_stub)]
     fn initialize_rejects_an_unworkable_schedule() {
-        let vm = SymbolicVm::<4>::concrete_ctx();
+        let vm = SymbolicVM::concrete_ctx();
         let mut v = Vesting::from(&vm);
 
         let start: u64 = kani::any();
@@ -588,7 +588,7 @@ mod proofs {
     #[kani::proof]
     #[kani::stub(ruint::Uint::overflowing_mul, kani_stylus_core::arith_oracle::overflowing_mul_stub)]
     fn zero_beneficiary_never_latches() {
-        let vm = SymbolicVm::<4>::concrete_ctx();
+        let vm = SymbolicVM::concrete_ctx();
         let mut v = Vesting::from(&vm);
         let start: u64 = kani::any();
         let duration: u64 = kani::any();
@@ -630,7 +630,7 @@ mod proofs {
     // `initialize` calls `checked_mul`; see `vested_is_zero_at_the_start`.
     #[kani::stub(ruint::Uint::overflowing_mul, kani_stylus_core::arith_oracle::overflowing_mul_stub)]
     fn nothing_vests_before_the_start() {
-        let vm = SymbolicVm::<8>::concrete_ctx();
+        let vm = SymbolicVM::concrete_ctx();
         let mut v = Vesting::from(&vm);
 
         let start: u64 = kani::any();
@@ -657,7 +657,7 @@ mod proofs {
     // CBMC cannot bound, so the harness would hang rather than fail.
     #[kani::stub(ruint::Uint::overflowing_mul, kani_stylus_core::arith_oracle::overflowing_mul_stub)]
     fn vested_is_zero_at_the_start() {
-        let vm = SymbolicVm::<8>::concrete_ctx();
+        let vm = SymbolicVM::concrete_ctx();
         let mut v = Vesting::from(&vm);
 
         let start: u64 = kani::any();
@@ -680,7 +680,7 @@ mod proofs {
     // `initialize` calls `checked_mul`; see `vested_is_zero_at_the_start`.
     #[kani::stub(ruint::Uint::overflowing_mul, kani_stylus_core::arith_oracle::overflowing_mul_stub)]
     fn vested_is_total_after_end() {
-        let vm = SymbolicVm::<8>::concrete_ctx();
+        let vm = SymbolicVM::concrete_ctx();
         let mut v = Vesting::from(&vm);
         
         let start: u64 = kani::any();
@@ -722,7 +722,7 @@ mod proofs {
     #[kani::stub(ruint::Uint::wrapping_div, kani_stylus_core::arith_oracle::div_stub)]
     #[kani::stub(ruint::Uint::overflowing_mul, kani_stylus_core::arith_oracle::overflowing_mul_stub)]
     fn vested_is_monotone_in_time() {
-        let vm = SymbolicVm::<4>::concrete_ctx();
+        let vm = SymbolicVM::concrete_ctx();
         let mut v = Vesting::from(&vm);
 
         let start: u64 = kani::any();
@@ -754,7 +754,7 @@ mod proofs {
     #[kani::stub(ruint::Uint::wrapping_div, kani_stylus_core::arith_oracle::div_stub)]
     #[kani::stub(ruint::Uint::overflowing_mul, kani_stylus_core::arith_oracle::overflowing_mul_stub)]
     fn vested_never_exceeds_total() {
-        let vm = SymbolicVm::<4>::concrete_ctx();
+        let vm = SymbolicVM::concrete_ctx();
         let mut v = Vesting::from(&vm);
 
         let start: u64 = kani::any();
@@ -780,7 +780,7 @@ mod proofs {
     #[kani::stub(ruint::Uint::wrapping_div, kani_stylus_core::wrapping_div_stub)]
     #[kani::should_panic]
     fn vested_unchecked_overflows() {
-        let vm = SymbolicVm::<4>::concrete_ctx();
+        let vm = SymbolicVM::concrete_ctx();
         let mut v = Vesting::from(&vm);
         
         let start: u64 = kani::any();
@@ -815,7 +815,7 @@ mod proofs {
     fn release_is_idempotent_at_the_same_timestamp() {
         let mut ctx = Context::concrete();
         ctx.block_timestamp = kani::any();
-        let vm = SymbolicVm::<3>::with_context(ctx);
+        let vm = SymbolicVM::with_context(ctx);
         let mut v = Vesting::from(&vm);
 
         let start: u64 = kani::any();
@@ -858,7 +858,7 @@ mod proofs {
 
         let mut ctx = Context::concrete();
         ctx.block_timestamp = t1;
-        let vm = SymbolicVm::<4>::with_context(ctx);
+        let vm = SymbolicVM::with_context(ctx);
         let mut v = Vesting::from(&vm);
 
         // `initialize` carries both schedule guards and sets `last_claim` to
@@ -893,7 +893,7 @@ mod proofs {
         let now: u64 = kani::any();
         let mut ctx = Context::concrete();
         ctx.block_timestamp = now;
-        let vm = SymbolicVm::<3>::with_context(ctx);
+        let vm = SymbolicVM::with_context(ctx);
         let mut v = Vesting::from(&vm);
 
         let start: u64 = kani::any();
@@ -927,7 +927,7 @@ mod proofs {
         let now: u64 = kani::any();
         let mut ctx = Context::concrete();
         ctx.block_timestamp = now;
-        let vm = SymbolicVm::<4>::with_context(ctx);
+        let vm = SymbolicVM::with_context(ctx);
         let mut v = Vesting::from(&vm);
 
         let start: u64 = kani::any();
@@ -971,7 +971,7 @@ mod proofs {
         let now: u64 = kani::any();
         let mut ctx = Context::concrete();
         ctx.block_timestamp = now;
-        let vm = SymbolicVm::<3>::with_context(ctx);
+        let vm = SymbolicVM::with_context(ctx);
         let mut v = Vesting::from(&vm);
 
         let start: u64 = kani::any();
@@ -1020,7 +1020,7 @@ mod proofs {
         let now: u64 = kani::any();
         let mut ctx = Context::concrete();
         ctx.block_timestamp = now;
-        let vm = SymbolicVm::<4>::with_context(ctx);
+        let vm = SymbolicVM::with_context(ctx);
         let mut v = Vesting::from(&vm);
 
         let start: u64 = kani::any();
@@ -1068,7 +1068,7 @@ mod proofs {
         let now: u64 = kani::any();
         let mut ctx = Context::concrete();
         ctx.block_timestamp = now;
-        let vm = SymbolicVm::<4>::with_context(ctx);
+        let vm = SymbolicVM::with_context(ctx);
         let mut v = Vesting::from(&vm);
 
         let start: u64 = kani::any();
