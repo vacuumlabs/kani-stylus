@@ -36,13 +36,35 @@
 //! #[kani::proof]
 //! #[kani::stub(ruint::Uint::wrapping_mul, kani_stylus_core::arith_oracle::mul_stub)]
 //! #[kani::stub(ruint::Uint::wrapping_div, kani_stylus_core::arith_oracle::div_stub)]
+//! #[kani::stub(ruint::Uint::overflowing_mul, kani_stylus_core::arith_oracle::overflowing_mul_stub)]
 //! fn vested_is_monotone_in_time() { /* ... */ }
 //! ```
 //!
 //! and `cargo kani -Z stubbing`. The stub path must name `ruint` directly, so
 //! the contract crate needs it as an (optional) dependency. `*`, `/`, `*=`, `/=`
-//! and `checked_div` all route through these two functions. `checked_mul`,
-//! `overflowing_mul` and `%` do not, and stay bit-precise.
+//! and `checked_div` all route through the first two stubs, and `checked_mul`
+//! and `overflowing_mul` through the third. `%` routes through none of them and
+//! stays bit-precise.
+//!
+//! **Stub `wrapping_mul` and `wrapping_div` together** unless the harness
+//! provably never multiplies. Leaving out the mul stub never fails to compile:
+//! it leaves a bit-precise 256-bit multiplier in the proof, and the result is a
+//! wrong answer or no answer at all.
+//!
+//! # Who decides overflow
+//!
+//! The oracle does not compute whether a product overflowed. Each
+//! multiplication records an `overflowed` flag, which is forced to `false` only
+//! where that is cheap to see (the operands' bit lengths sum to at most 256),
+//! and is otherwise left free. A harness assumption (`checked_mul(..).is_some()`)
+//! or the contract's own branch on `checked_mul` decides it, and the lemmas that
+//! need a product to fit hold relative to the flag. This lets a proof reach right
+//! up to 2^256 instead of stopping at a bit-length threshold.
+//!
+//! The solver may set the flag on a product that would in fact fit, which
+//! sends a checked contract down its overflow branch. For a safety property that
+//! is conservative. For a claim that something *never* reverts, it can produce a
+//! spurious failure.
 //!
 //! # What a result means
 //!
@@ -71,12 +93,14 @@ use ruint::Uint;
 /// See "Bounded, but never vacuous" above for what happens past it.
 pub const MAX_OPS: usize = 8;
 
-/// One recorded operation: `r == a * b`, or `r == a / b`.
+/// One recorded operation: `r == a * b`, or `r == a / b`. `overflowed` says
+/// whether the product wrapped; it is always `false` for a division.
 #[derive(Clone, Copy)]
 struct Op {
     a: U256,
     b: U256,
     r: U256,
+    overflowed: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -95,7 +119,7 @@ struct Oracle {
 /// Verification is single-threaded, so the unsynchronised access is sound here.
 #[cfg(kani)]
 static mut ORACLE: Oracle = {
-    const Z: Op = Op { a: U256::ZERO, b: U256::ZERO, r: U256::ZERO };
+    const Z: Op = Op { a: U256::ZERO, b: U256::ZERO, r: U256::ZERO, overflowed: false };
     Oracle { muls: [Z; MAX_OPS], n_muls: 0, divs: [Z; MAX_OPS], n_divs: 0 }
 };
 
@@ -114,7 +138,26 @@ pub fn mul_stub<const BITS: usize, const LIMBS: usize>(
     a: Uint<BITS, LIMBS>,
     b: Uint<BITS, LIMBS>,
 ) -> Uint<BITS, LIMBS> {
-    let new = Op { a: to_u256(a), b: to_u256(b), r: U256::from_limbs(kani::any()) };
+    from_u256(record_mul(to_u256(a), to_u256(b)).r)
+}
+
+/// Drop-in replacement for `ruint::Uint::overflowing_mul`, which `checked_mul`
+/// calls. The product is the same opaque value `mul_stub` would give; the flag
+/// is the one the lemmas are keyed on.
+#[cfg(kani)]
+pub fn overflowing_mul_stub<const BITS: usize, const LIMBS: usize>(
+    a: Uint<BITS, LIMBS>,
+    b: Uint<BITS, LIMBS>,
+) -> (Uint<BITS, LIMBS>, bool) {
+    let m = record_mul(to_u256(a), to_u256(b));
+    (from_u256(m.r), m.overflowed)
+}
+
+/// A fresh multiplication, constrained by every lemma and recorded.
+#[cfg(kani)]
+fn record_mul(a: U256, b: U256) -> Op {
+    let new = Op { a, b, r: U256::from_limbs(kani::any()), overflowed: kani::any() };
+    kani::assume(implies(no_wrap(&new.a, &new.b), !new.overflowed));
     kani::assume(mul_facts(&new));
     with_oracle(|o| {
         let mut i = 0;
@@ -132,7 +175,7 @@ pub fn mul_stub<const BITS: usize, const LIMBS: usize>(
             o.n_muls += 1;
         }
     });
-    from_u256(new.r)
+    new
 }
 
 /// Drop-in replacement for `ruint::Uint::wrapping_div`, which `/` calls.
@@ -143,7 +186,8 @@ pub fn div_stub<const BITS: usize, const LIMBS: usize>(
     a: Uint<BITS, LIMBS>,
     b: Uint<BITS, LIMBS>,
 ) -> Uint<BITS, LIMBS> {
-    let new = Op { a: to_u256(a), b: to_u256(b), r: U256::from_limbs(kani::any()) };
+    let new =
+        Op { a: to_u256(a), b: to_u256(b), r: U256::from_limbs(kani::any()), overflowed: false };
     assert!(!eq(&new.b, &U256::ZERO), "attempt to divide by zero");
     kani::assume(div_facts(&new));
     with_oracle(|o| {
@@ -190,15 +234,15 @@ fn from_u256<const BITS: usize, const LIMBS: usize>(x: U256) -> Uint<BITS, LIMBS
 // stub asserts it before any lemma is assumed.
 // ---------------------------------------------------------------------------
 
-/// `m.r == m.a * m.b`, wrapping.
+/// `m.r == m.a * m.b`, wrapping, and `m.overflowed` says whether it wrapped.
 fn mul_facts(m: &Op) -> bool {
-    let (a, b, p) = (&m.a, &m.b, &m.r);
+    let (a, b, p, fits) = (&m.a, &m.b, &m.r, !m.overflowed);
     implies(eq(a, &U256::ZERO) || eq(b, &U256::ZERO), eq(p, &U256::ZERO))
         && implies(eq(a, &U256::ONE), eq(p, b))
         && implies(eq(b, &U256::ONE), eq(p, a))
         // Without wrapping, a product is at least each operand it multiplies.
-        && implies(no_wrap(a, b) && !eq(b, &U256::ZERO), le(a, p))
-        && implies(no_wrap(a, b) && !eq(a, &U256::ZERO), le(b, p))
+        && implies(fits && !eq(b, &U256::ZERO), le(a, p))
+        && implies(fits && !eq(a, &U256::ZERO), le(b, p))
 }
 
 /// Two multiplications. The stub applies this in both orders.
@@ -207,11 +251,14 @@ fn mul_pair_facts(m1: &Op, m2: &Op) -> bool {
     let swapped = eq(&m1.a, &m2.b) && eq(&m1.b, &m2.a);
     let one_operand_grows =
         (eq(&m1.a, &m2.a) && le(&m1.b, &m2.b)) || (eq(&m1.b, &m2.b) && le(&m1.a, &m2.a));
-    // Functional and commutative.
-    implies(same || swapped, eq(&m1.r, &m2.r))
+    // Functional and commutative, in the flag as well as the product.
+    implies(same || swapped, eq(&m1.r, &m2.r) && m1.overflowed == m2.overflowed)
+        // If the larger product fits, so does the smaller. This is what carries
+        // a guard on `a * b` over to a product `a * c` with `c <= b`.
+        && implies(one_operand_grows && !m2.overflowed, !m1.overflowed)
         // Monotone in each operand, the other held fixed, while neither wraps.
         && implies(
-            no_wrap(&m1.a, &m1.b) && no_wrap(&m2.a, &m2.b) && one_operand_grows,
+            !m1.overflowed && !m2.overflowed && one_operand_grows,
             le(&m1.r, &m2.r),
         )
 }
@@ -238,7 +285,7 @@ fn div_pair_facts(d1: &Op, d2: &Op) -> bool {
 fn mul_div_facts(m: &Op, d: &Op) -> bool {
     let (x, y, b, q) = (&m.a, &m.b, &d.b, &d.r);
     implies(
-        eq(&d.a, &m.r) && no_wrap(x, y),
+        eq(&d.a, &m.r) && !m.overflowed,
         // Scaling by a fraction no greater than one cannot grow a value...
         implies(le(y, b), le(q, x))
             && implies(le(x, b), le(q, y))
@@ -250,7 +297,8 @@ fn mul_div_facts(m: &Op, d: &Op) -> bool {
 
 /// `a * b` certainly fits in 256 bits: `a < 2^m` and `b < 2^n` give
 /// `a * b < 2^(m + n)`. Sufficient, not necessary — a product can fit with
-/// `m + n = 257`, and then the lemmas that need this simply don't apply.
+/// `m + n = 257` — so it only forces a multiplication's `overflowed` flag to
+/// `false`. The lemmas key on the flag, not on this.
 fn no_wrap(a: &U256, b: &U256) -> bool {
     bit_len(a) + bit_len(b) <= 256
 }
@@ -333,13 +381,21 @@ mod tests {
             let v = self.value();
             if v == U256::ZERO { U256::ONE } else { v }
         }
+        /// `(a, MAX / a)`: the largest product with `a` that still fits. Its bit
+        /// lengths often sum to 257, the region `no_wrap` cannot see into, and
+        /// one more on either operand overflows.
+        fn boundary_pair(&mut self) -> (U256, U256) {
+            let a = self.nonzero();
+            (a, U256::MAX / a)
+        }
     }
 
     fn mul(a: U256, b: U256) -> Op {
-        Op { a, b, r: a * b }
+        let (r, overflowed) = a.overflowing_mul(b);
+        Op { a, b, r, overflowed }
     }
     fn div(a: U256, b: U256) -> Op {
-        Op { a, b, r: a / b }
+        Op { a, b, r: a / b, overflowed: false }
     }
 
     const ROUNDS: usize = 20_000;
@@ -357,24 +413,60 @@ mod tests {
         }
     }
 
+    fn check_mul_lemmas(a: U256, b: U256, c: U256) {
+        let (lo, hi) = if b <= c { (b, c) } else { (c, b) };
+        let m = mul(a, b);
+        assert!(mul_facts(&m), "mul_facts: {a} * {b}");
+        // Pairs that share an operand, in both positions and both orders.
+        for (m1, m2) in [
+            (m, mul(b, a)),
+            (m, mul(a, b)),
+            (mul(a, lo), mul(a, hi)),
+            (mul(lo, a), mul(hi, a)),
+            (mul(a, b), mul(a, c)),
+        ] {
+            assert!(mul_pair_facts(&m1, &m2) && mul_pair_facts(&m2, &m1),
+                "mul_pair_facts: {} * {} vs {} * {}", m1.a, m1.b, m2.a, m2.b);
+        }
+    }
+
     #[test]
     fn mul_lemmas_hold() {
         let mut g = Rng(2);
         for _ in 0..ROUNDS {
-            let (a, b, c) = (g.value(), g.value(), g.value());
-            let (lo, hi) = if b <= c { (b, c) } else { (c, b) };
-            let m = mul(a, b);
-            assert!(mul_facts(&m), "mul_facts: {a} * {b}");
-            // Pairs that share an operand, in both positions and both orders.
-            for (m1, m2) in [
-                (m, mul(b, a)),
-                (m, mul(a, b)),
-                (mul(a, lo), mul(a, hi)),
-                (mul(lo, a), mul(hi, a)),
-                (mul(a, b), mul(a, c)),
-            ] {
-                assert!(mul_pair_facts(&m1, &m2) && mul_pair_facts(&m2, &m1),
-                    "mul_pair_facts: {} * {} vs {} * {}", m1.a, m1.b, m2.a, m2.b);
+            check_mul_lemmas(g.value(), g.value(), g.value());
+        }
+    }
+
+    /// The same, at the edge of overflow, where the lemmas now fire on the
+    /// recorded flag although `no_wrap` does not hold.
+    #[test]
+    fn mul_lemmas_hold_at_the_overflow_boundary() {
+        let mut g = Rng(5);
+        let mut beyond_no_wrap = 0;
+        for _ in 0..ROUNDS {
+            let (a, b) = g.boundary_pair();
+            beyond_no_wrap += usize::from(!no_wrap(&a, &b));
+            let c = [b.saturating_add(U256::ONE), b - (b >> 1), g.value()][(g.next() % 3) as usize];
+            check_mul_lemmas(a, b, c);
+            check_mul_lemmas(b, a, c);
+        }
+        // The point of this test: products that fit but that `no_wrap` misses.
+        assert!(beyond_no_wrap > ROUNDS / 4, "only {beyond_no_wrap} pairs beyond no_wrap");
+    }
+
+    /// Lemma 5b in isolation, against ruint's own flag.
+    #[test]
+    fn smaller_operand_cannot_overflow() {
+        let mut g = Rng(6);
+        for i in 0..ROUNDS {
+            let (a, b2) = if i % 2 == 0 { g.boundary_pair() } else { (g.value(), g.value()) };
+            let b1 = if b2 == U256::ZERO { b2 } else { g.value() % b2 };
+            for (x, y1, y2) in [(a, b1, b2), (a, b1, b2.saturating_add(U256::ONE))] {
+                if !x.overflowing_mul(y2).1 {
+                    assert!(!x.overflowing_mul(y1).1, "{x} * {y1} overflows but {x} * {y2} fits");
+                    assert!(!y1.overflowing_mul(x).1, "{y1} * {x} overflows but {y2} * {x} fits");
+                }
             }
         }
     }
@@ -396,8 +488,8 @@ mod tests {
     #[test]
     fn mul_div_lemmas_hold() {
         let mut g = Rng(4);
-        for _ in 0..ROUNDS {
-            let (x, y) = (g.value(), g.value());
+        for i in 0..ROUNDS {
+            let (x, y) = if i % 2 == 0 { g.boundary_pair() } else { (g.value(), g.value()) };
             let m = mul(x, y);
             // Divisors that make each premise fire: equal to, and just above,
             // either operand -- plus an unrelated one.

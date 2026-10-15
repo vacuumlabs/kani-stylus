@@ -74,37 +74,6 @@ sol_storage! {
     }
 }
 
-#[inline(always)]
-fn schedule(start: u64, duration: u64, total: U256, t: u64) -> U256 {
-    if t < start {
-        return U256::ZERO;
-    }
-
-    // DELIBERATE DEFECT 1 — do not "fix".
-    //
-    // `start + duration` overflows `u64` for a far-future schedule, and
-    // the wrapped sum lands below `t`, so the contract reports everything
-    // vested from the moment it is set up.
-    //
-    // This one Kani finds *on its own*: `u64` is a primitive, and
-    // arithmetic overflow checks are on by default. Contrast defect 2,
-    // four lines down, which is the same bug in `U256` and is invisible
-    // unless a proof asserts it. Having one of each is the point — it puts
-    // the distinction in front of anyone reading the suite.
-    if t >= start + duration {
-        return total;
-    }
-
-    // DELIBERATE DEFECT 2 — do not "fix".
-    //
-    // `total * (t - start)` wraps silently. `alloy`/`ruint` define `*` as
-    // `wrapping_mul`, so for a large `total` this can report *more* than
-    // `total` vested, or wrap back to near zero. Kani's overflow checks
-    // cover primitive integers only and will not flag it; a harness has to
-    // assert the bound explicitly.
-    total * U256::from(t - start) / U256::from(duration)
-}
-
 #[public]
 impl Vesting {
     pub fn beneficiary(&self) -> Address {
@@ -176,6 +145,24 @@ impl Vesting {
             return Err(b"zero duration".to_vec());
         }
 
+        // Reject a schedule whose arithmetic cannot be carried out, rather than
+        // leaving `vested_amount` to wrap on every later call. Both checks are
+        // about the *schedule*, so construction is where they belong.
+        //
+        // The first is DELIBERATE DEFECT 1's precondition: `start + duration`
+        // must not overflow `u64`, or the schedule's end wraps below its start.
+        if start.checked_add(duration).is_none() {
+            return Err(b"schedule end overflows".to_vec());
+        }
+        // The second is DELIBERATE DEFECT 2's, and it covers *every* later `t`.
+        // `vested_amount` multiplies `total * (t - start)` only in its third
+        // branch, where `t - start < duration`, so `total * (t - start)` is at
+        // most `total * duration`. Bounding the largest case bounds them all,
+        // and it needs checking once here instead of on every call.
+        if total.checked_mul(U256::from(duration)).is_none() {
+            return Err(b"total too large for this duration".to_vec());
+        }
+
         self.beneficiary.set(beneficiary);
         self.total.set(total);
         self.start.set(U64::from(start));
@@ -191,7 +178,69 @@ impl Vesting {
     /// can divide by it. Reaching branch 2 means `t >= start`, so with a zero
     /// duration `t >= start + 0` holds and the division is unreachable.
     pub fn vested_amount(&self, t: u64) -> U256 {
-        schedule(self.start(), self.duration(), self.total.get(), t)
+        let start = self.start();
+        if t < start {
+            return U256::ZERO;
+        }
+
+        let duration = self.duration();
+        let total = self.total.get();
+        // DELIBERATE DEFECT 1 — do not "fix".
+        //
+        // `start + duration` overflows `u64` for a far-future schedule, and
+        // the wrapped sum lands below `t`, so the contract reports everything
+        // vested from the moment it is set up.
+        //
+        // This one Kani finds *on its own*: `u64` is a primitive, and
+        // arithmetic overflow checks are on by default. Contrast defect 2,
+        // four lines down, which is the same bug in `U256` and is invisible
+        // unless a proof asserts it. Having one of each is the point — it puts
+        // the distinction in front of anyone reading the suite.
+        if t >= start + duration {
+            return total;
+        }
+
+        // DELIBERATE DEFECT 2 — do not "fix".
+        //
+        // `total * (t - start)` wraps silently. `alloy`/`ruint` define `*` as
+        // `wrapping_mul`, so for a large `total` this can report *more* than
+        // `total` vested, or wrap back to near zero. Kani's overflow checks
+        // cover primitive integers only and will not flag it; a harness has to
+        // assert the bound explicitly.
+        total * U256::from(t - start) / U256::from(duration)
+    }
+
+    pub fn vested_amount_unchecked(&self, t: u64) -> U256 {
+        let start = self.start();
+        if t < start {
+            return U256::ZERO;
+        }
+
+        let duration = self.duration();
+        let total = self.total.get();
+        // DELIBERATE DEFECT 1 — do not "fix".
+        //
+        // `start + duration` overflows `u64` for a far-future schedule, and
+        // the wrapped sum lands below `t`, so the contract reports everything
+        // vested from the moment it is set up.
+        //
+        // This one Kani finds *on its own*: `u64` is a primitive, and
+        // arithmetic overflow checks are on by default. Contrast defect 2,
+        // four lines down, which is the same bug in `U256` and is invisible
+        // unless a proof asserts it. Having one of each is the point — it puts
+        // the distinction in front of anyone reading the suite.
+        if t >= start + duration {
+            return total;
+        }
+
+        // DELIBERATE DEFECT 2 — do not "fix".
+        //
+        // `total * (t - start)` wraps silently. `alloy`/`ruint` define `*` as
+        // `wrapping_mul`, so for a large `total` this can report *more* than
+        // `total` vested, or wrap back to near zero. Kani's overflow checks
+        // cover primitive integers only and will not flag it; a harness has to
+        // assert the bound explicitly.
+        total * U256::from(t - start) / U256::from(duration)
     }
 
     /// Vested but not yet released. The only place the host clock is read,
@@ -350,11 +399,32 @@ mod proofs {
     // `#[kani::stub(..)]` attributes, so it needs no import here.
     use kani_stylus_core::{any_u256, split, ueq, ult, widen, SymbolicVM, SymbolicVm};
 
-    // Only the `slow-proofs` harnesses build a custom context.
-    #[cfg(feature = "slow-proofs")]
     use kani_stylus_core::Context;
 
     use ruint::Uint;
+
+    /// Assume `a * b` cannot overflow, for `b: u64`.
+    ///
+    /// Requires `#[kani::stub(ruint::Uint::overflowing_mul, ..)]` on the
+    /// harness: `checked_mul` routes through `overflowing_mul`, so without the
+    /// stub this reaches `addmul` -> `trim_end_zeros`, whose loops CBMC cannot
+    /// bound.
+    #[allow(dead_code)]
+    fn assume_no_mul_overflow(a: U256, b: u64) {
+        kani::assume(a.checked_mul(U256::from(b)).is_some());
+    }
+
+    /// The same, with the `u64` operand left implicit: any `u64` is below 2^64,
+    /// so `a <= 2^192 - 1` suffices whatever it turns out to be.
+    ///
+    /// **Over-approximates** — it excludes pairs that would not in fact
+    /// overflow, so a harness using it proves slightly less than one using
+    /// `assume_no_mul_overflow`. Every harness uses this form anyway, because
+    /// the exact one drags in the `overflowing_mul` stub and a 512-bit
+    /// multiply. Which is actually cheaper has never been measured.
+    fn assume_no_mul_overflow_approximation(a: U256) {
+        kani::assume(a <= U256::MAX >> 64);
+    }
 
     // NOTE: !!! do *NOT* just remove, presumably needed for proper total overflow test (currently replaced with simplified bit-shift test or not applied at all in each harness)
     fn overflowing_mul_stub<const BITS: usize, const LIMBS: usize>(
@@ -393,6 +463,7 @@ mod proofs {
 
 
     #[kani::proof]
+    #[kani::stub(ruint::Uint::overflowing_mul, kani_stylus_core::arith_oracle::overflowing_mul_stub)]
     fn initialize_runs_successfully() {
         let vm = SymbolicVM::concrete_ctx();
         let mut v = Vesting::from(&vm);
@@ -400,11 +471,23 @@ mod proofs {
         let start: u64 = kani::any();
         let duration: u64 = kani::any();
         kani::assume(duration > 0);
-        v.initialize(Address::from([1u8; 20]), any_u256(), start, duration).unwrap();
+
+        // `initialize` now rejects schedules whose arithmetic would overflow, so
+        // an `unwrap()` here would turn a legitimate rejection into a panic.
+        // Assuming success is the harness's actual claim: *when* initialization
+        // succeeds, the fields are set. The rejections have their own harness.
+        let created = v.initialize(Address::from([1u8; 20]), any_u256(), start, duration);
+        kani::assume(created.is_ok());
+
         assert_eq!(v.duration(), duration);
     }
 
+    /// The second call must fail *because the contract is already initialized*.
+    /// The new parameter checks can also reject it, but the assertion has to
+    /// hold on every path, so paths with valid parameters still exercise the
+    /// re-initialization guard specifically.
     #[kani::proof]
+    #[kani::stub(ruint::Uint::overflowing_mul, kani_stylus_core::arith_oracle::overflowing_mul_stub)]
     fn cannot_reinitialize() {
         let vm = SymbolicVm::<4>::concrete_ctx();
         let mut v = Vesting::from(&vm);
@@ -413,7 +496,9 @@ mod proofs {
         let duration: u64 = kani::any();
         kani::assume(duration > 0);
         let total = any_u256();
-        v.initialize(Address::from([1u8; 20]), total, start, duration).unwrap();
+        // See `initialize_runs_successfully` on why this is not an `unwrap()`.
+        let created = v.initialize(Address::from([1u8; 20]), total, start, duration);
+        kani::assume(created.is_ok());
 
         let start2: u64 = kani::any();
         let duration2: u64 = kani::any();
@@ -427,8 +512,9 @@ mod proofs {
         assert_eq!(v.duration(), duration);
         assert_eq!(v.last_claim(), start);
     }
-
+    
     #[kani::proof]
+    #[kani::stub(ruint::Uint::overflowing_mul, kani_stylus_core::arith_oracle::overflowing_mul_stub)]
     fn initialize_rejects_zero_duration() {
         let vm = SymbolicVm::<4>::concrete_ctx();
         let mut v = Vesting::from(&vm);
@@ -439,8 +525,58 @@ mod proofs {
         assert_eq!(v.total(), U256::ZERO);
     }
 
+    /// The two schedule checks reject what they are there to reject, and the
+    /// contract stays untouched.
+    ///
+    /// Without this they would be exercised only incidentally — every other
+    /// harness either supplies parameters that pass them or assumes success —
+    /// so a guard that stopped firing would leave the suite green.
     #[kani::proof]
-    #[kani::should_panic]
+    #[kani::stub(ruint::Uint::overflowing_mul, kani_stylus_core::arith_oracle::overflowing_mul_stub)]
+    fn initialize_rejects_an_unworkable_schedule() {
+        let vm = SymbolicVm::<4>::concrete_ctx();
+        let mut v = Vesting::from(&vm);
+
+        let start: u64 = kani::any();
+        let duration: u64 = kani::any();
+        kani::assume(duration > 0);          // past the zero-duration guard
+        let total = any_u256();
+
+        // At least one of the two schedule checks has to reject this. The
+        // `checked_mul` here goes through the same stub as the contract's, so
+        // both see one recorded multiplication and agree on its overflow flag.
+        kani::assume(
+            start.checked_add(duration).is_none()
+                || total.checked_mul(U256::from(duration)).is_none(),
+        );
+
+        assert!(
+            v.initialize(Address::from([1u8; 20]), total, start, duration).is_err(),
+            "initialize accepted a schedule whose arithmetic overflows"
+        );
+        assert_eq!(v.beneficiary(), Address::ZERO);
+        assert_eq!(v.total(), U256::ZERO);
+    }
+
+    /// DELIBERATE DEFECT 4: initializing *to* the zero address leaves the
+    /// re-initialization guard unlatched, so the contract can be initialized
+    /// again.
+    ///
+    /// Asserted directly rather than through `#[kani::should_panic]`, because
+    /// the defect is *universal* here: after `initialize(Address::ZERO, ..)` the
+    /// guard `beneficiary != ZERO` is false on every path, so with workable
+    /// parameters the second call always succeeds. `should_panic` is only
+    /// needed where the defect is existential and the property can only be
+    /// stated by negating it — `vested_unchecked_overflows` is that case.
+    ///
+    /// Stating it positively costs two assumptions and buys three things: no
+    /// unrelated panic can satisfy the harness, every other assertion in it has
+    /// to hold too, and it can use the oracle's `overflowing_mul_stub` instead
+    /// of the exact one, keeping a 512-bit multiply out of the formula. It
+    /// still catches a "fix": the second call would start returning `Err` and
+    /// this assertion would fail.
+    #[kani::proof]
+    #[kani::stub(ruint::Uint::overflowing_mul, kani_stylus_core::arith_oracle::overflowing_mul_stub)]
     fn zero_beneficiary_never_latches() {
         let vm = SymbolicVm::<4>::concrete_ctx();
         let mut v = Vesting::from(&vm);
@@ -449,14 +585,24 @@ mod proofs {
         kani::assume(duration > 0);
         let total = any_u256();
 
-        v.initialize(Address::ZERO, total, start, duration).unwrap();
+        // Not an `unwrap()`: `initialize` can now reject these parameters, and
+        // that panic would satisfy `should_panic` without demonstrating
+        // anything. The defect has to be what panics.
+        let created = v.initialize(Address::ZERO, total, start, duration);
+        kani::assume(created.is_ok());
 
         let start2: u64 = kani::any();
         let duration2: u64 = kani::any();
         kani::assume(duration2 > 0);
         let total2 = any_u256();
+        // The second call's parameters have to be workable, or it would be
+        // rejected by the schedule checks and the assertion below would fail
+        // for a reason that has nothing to do with the guard.
+        kani::assume(start2.checked_add(duration2).is_some());
+        kani::assume(total2.checked_mul(U256::from(duration2)).is_some());
+
         assert!(
-            v.initialize(Address::ZERO, total2, start2, duration2).is_err(),
+            v.initialize(Address::ZERO, total2, start2, duration2).is_ok(),
             "a zero beneficiary never latches the guard -- the contract stays re-initializable"
         );
     }
@@ -533,51 +679,6 @@ mod proofs {
         assert_eq!(v.vested_amount(t), total);
     }
 
-    /*
-    // NOTE: does not currently verify anything
-    #[kani::proof]
-    #[kani::stub(ruint::Uint::overflowing_mul, crate::proofs::overflowing_mul_stub)]
-    fn mul_stub_takes_effect() {
-        assert!(U256::MAX.checked_mul(U256::from(2u64)).is_none())
-    }
-
-    // NOTE: never converged, probably not the way to go
-    #[kani::proof]
-    #[kani::stub(ruint::Uint::overflowing_mul, crate::proofs::overflowing_mul_stub)]
-    fn overflowing_mul_value_matches_wrapping_mul() {
-        let a = any_u256();
-        let b = any_u256();
-        let (v, _) = a.overflowing_mul(b);
-        assert_eq!(v, a.wrapping_mul(b));
-    }
-    */
-
-
-
-    #[cfg(feature = "slow-proofs")]
-    #[kani::proof]
-    fn division_is_monotone_u64() {
-        let a1: u64 = kani::any();
-        let a2: u64 = kani::any();
-        let b:  u64 = kani::any();
-        kani::assume(b != 0);
-        kani::assume(a1 <= a2);
-        assert!(a1 / b <= a2 / b, "division not monotone");
-    }
-
-
-    #[cfg(feature = "slow-proofs")]
-    #[kani::proof]
-    #[kani::stub(ruint::Uint::wrapping_div, kani_stylus_core::wrapping_div_stub)]
-    fn division_is_monotone_u256() {
-        let a1 = any_u256();
-        let a2 = any_u256();
-        let b  = any_u256();
-        kani::assume(b != U256::ZERO);
-        kani::assume(a1 <= a2);
-        assert!(a1 / b <= a2 / b, "division not monotone");
-    }
-
     /// The vested amount never goes backwards: for *every* pair of instants
     /// `t1 <= t2`, before the start, during the schedule and after its end, with
     /// every parameter symbolic and `total` up to 2^192, through the contract's
@@ -597,6 +698,7 @@ mod proofs {
     #[kani::proof]
     #[kani::stub(ruint::Uint::wrapping_mul, kani_stylus_core::arith_oracle::mul_stub)]
     #[kani::stub(ruint::Uint::wrapping_div, kani_stylus_core::arith_oracle::div_stub)]
+    #[kani::stub(ruint::Uint::overflowing_mul, kani_stylus_core::arith_oracle::overflowing_mul_stub)]
     fn vested_is_monotone_in_time() {
         let vm = SymbolicVm::<4>::concrete_ctx();
         let mut v = Vesting::from(&vm);
@@ -606,13 +708,16 @@ mod proofs {
         kani::assume(duration > 0);
         kani::assume(start.checked_add(duration).is_some()); // defect 1 guard
         let total = any_u256();
-        // Over-approximation of "DELIBERATE DEFECT 2 cannot fire here"; see
-        // `vested_never_exceeds_total`.
-        kani::assume(total <= U256::MAX >> 64);
+        //let total = U256::from(kani::any::<u8>() & 0xf);
+        assume_no_mul_overflow(total, duration);   // needs the overflowing_mul stub
 
         v.start.set(U64::from(start));
         v.duration.set(U64::from(duration));
         v.total.set(total);
+
+        //v.start.set(U64::from(start));
+        //v.duration.set(U64::from(duration));
+        //v.total.set(U256::from(total));
 
         let t1: u64 = kani::any();
         let t2: u64 = kani::any();
@@ -626,67 +731,30 @@ mod proofs {
         );
     }
 
-    #[cfg(feature = "slow-proofs")]
-    #[kani::proof]
-    #[kani::stub(ruint::Uint::wrapping_div, kani_stylus_core::wrapping_div_stub_monotone)]
-    #[kani::stub(ruint::Uint::overflowing_mul, crate::proofs::overflowing_mul_stub)]
-    fn vested_experiment_0100() {
-        let start: u64 = kani::any();
-        let duration: u64 = kani::any();
-        kani::assume(duration > 0);
-        kani::assume(start.checked_add(duration).is_some());
-        let total = U256::from(100u64);
-
-        let t1: u64 = kani::any();
-        let t2: u64 = kani::any();
-        kani::assume(start <= t1);
-        kani::assume(t1 <= t2);
-        kani::assume(t2 <= start + duration);
-        assert!(schedule(start, duration, total, t1) <= schedule(start, duration, total, t2), "monotonicity broken");
-    }
-
-    #[cfg(feature = "slow-proofs")]
-    #[kani::proof]
-    #[kani::stub(ruint::Uint::wrapping_div, kani_stylus_core::wrapping_div_stub_monotone)]
-    #[kani::stub(ruint::Uint::overflowing_mul, crate::proofs::overflowing_mul_stub)]
-    fn vested_experiment_1000() {
-        let start: u64 = kani::any();
-        let duration: u64 = kani::any();
-        kani::assume(duration > 0);
-        kani::assume(start.checked_add(duration).is_some());
-        let total = U256::from(1000u64);
-
-        let t1: u64 = kani::any();
-        let t2: u64 = kani::any();
-        kani::assume(start <= t1);
-        kani::assume(t1 <= t2);
-        kani::assume(t2 <= start + duration);
-        assert!(schedule(start, duration, total, t1) <= schedule(start, duration, total, t2), "monotonicity broken");
-    }
-
     /// It rests on `total * e / d <= total` for `e <= d`, a nonlinear fact:
     /// with exact division this sat behind `slow-proofs`. It is one of
     /// `arith_oracle`'s lemmas.
     #[kani::proof]
     #[kani::stub(ruint::Uint::wrapping_mul, kani_stylus_core::arith_oracle::mul_stub)]
     #[kani::stub(ruint::Uint::wrapping_div, kani_stylus_core::arith_oracle::div_stub)]
+    #[kani::stub(ruint::Uint::overflowing_mul, kani_stylus_core::arith_oracle::overflowing_mul_stub)]
     fn vested_never_exceeds_total() {
+        let vm = SymbolicVm::<4>::concrete_ctx();
+        let mut v = Vesting::from(&vm);
+
         let start: u64 = kani::any();
         let duration: u64 = kani::any();
         kani::assume(duration > 0);
         kani::assume(start.checked_add(duration).is_some());
         let total = any_u256();
+        assume_no_mul_overflow(total, duration);
 
-        // Cheap over-approximation of "DELIBERATE DEFECT 2 cannot fire here":
-        // since `t - start <= duration < 2^64`, `total <= 2^192 - 1` suffices.
-        // Stronger than necessary — it excludes schedules that would not in fact
-        // overflow. The exact form is
-        // `total.checked_mul(U256::from(duration)).is_some()`, which needs the
-        // `overflowing_mul` stub because `checked_mul` routes through it.
-        kani::assume(total <= U256::MAX >> 64);
+        v.start.set(U64::from(start));
+        v.duration.set(U64::from(duration));
+        v.total.set(total);
 
         let t: u64 = kani::any();
-        assert!(schedule(start, duration, total, t) <= total, "vested exceeded total");
+        assert!(v.vested_amount(t) <= total, "vested exceeded total");
         // Non-vacuity: the branch that multiplies and divides is reachable
         // under the oracle's lemmas, not only the two that return early.
         kani::cover!(start < t && t < start + duration, "the division branch is reachable");
@@ -694,7 +762,6 @@ mod proofs {
 
     #[kani::proof]
     #[kani::stub(ruint::Uint::wrapping_div, kani_stylus_core::wrapping_div_stub)]
-    #[kani::stub(ruint::Uint::overflowing_mul, crate::proofs::overflowing_mul_stub)]
     #[kani::should_panic]
     fn vested_unchecked_overflows() {
         let vm = SymbolicVm::<4>::concrete_ctx();
@@ -719,9 +786,10 @@ mod proofs {
         assert!(v.vested_amount(t1) <= v.vested_amount(t2), "monotonicity broken");
     }
 
-    #[cfg(feature = "slow-proofs")]
     #[kani::proof]
-    #[kani::stub(ruint::Uint::wrapping_div, kani_stylus_core::wrapping_div_stub_memo)]
+    #[kani::stub(ruint::Uint::wrapping_mul, kani_stylus_core::arith_oracle::mul_stub)]
+    #[kani::stub(ruint::Uint::wrapping_div, kani_stylus_core::arith_oracle::div_stub)]
+    #[kani::stub(ruint::Uint::overflowing_mul, kani_stylus_core::arith_oracle::overflowing_mul_stub)]
     fn release_is_idempotent_at_the_same_timestamp() {
         let mut ctx = Context::concrete();
         ctx.block_timestamp = kani::any();
@@ -732,8 +800,9 @@ mod proofs {
         let duration: u64 = kani::any();
         kani::assume(duration > 0);
         kani::assume(start.checked_add(duration).is_some());   // defect 1 guard
-        let total = U256::from(100u64);
-        //let total = any_u256();
+        //let total = U256::from(100u64);
+        let total = any_u256();
+        assume_no_mul_overflow(total, duration);   // needs the overflowing_mul stub
 
         v.start.set(U64::from(start));
         v.duration.set(U64::from(duration));
@@ -751,9 +820,9 @@ mod proofs {
 
     }
 
-    #[cfg(feature = "slow-proofs")]
     #[kani::proof]
     #[kani::stub(ruint::Uint::wrapping_div, kani_stylus_core::wrapping_div_stub)]
+    #[kani::stub(ruint::Uint::overflowing_mul, crate::proofs::overflowing_mul_stub)]
     #[kani::should_panic]
     fn drifting_release_loses_value() {
         let start: u64 = kani::any();
@@ -767,10 +836,8 @@ mod proofs {
         kani::assume(t2 <= start + duration);
 
         let total = any_u256();
-        // Over-approximation of "DELIBERATE DEFECT 2 cannot fire here"; see the
-        // note in `vested_never_exceeds_total` for why this is stronger than
-        // necessary and what the exact form costs.
-        kani::assume(total <= U256::MAX >> 64);
+        //assume_no_mul_overflow_approximation(total);
+        assume_no_mul_overflow(total, duration);
 
         let mut ctx = Context::concrete();
         ctx.block_timestamp = t1;
@@ -792,5 +859,228 @@ mod proofs {
             v2.released_naive() >= v2.vested_amount(t2),
             "drifting kept up with the schedule"
         );
+    }
+
+    /// The core correctness property of the release side: after a claim,
+    /// `released` is exactly what the schedule says has vested.
+    ///
+    /// Two divisions at the same instant — one inside `release`, one in the
+    /// assertion — so this needs only the memo's determinism, never a fact
+    /// relating different products.
+    #[kani::proof]
+    #[kani::stub(ruint::Uint::wrapping_mul, kani_stylus_core::arith_oracle::mul_stub)]
+    #[kani::stub(ruint::Uint::wrapping_div, kani_stylus_core::arith_oracle::div_stub)]
+    #[kani::stub(ruint::Uint::overflowing_mul, kani_stylus_core::arith_oracle::overflowing_mul_stub)]
+    fn release_leaves_released_equal_to_vested() {
+        let now: u64 = kani::any();
+        let mut ctx = Context::concrete();
+        ctx.block_timestamp = now;
+        let vm = SymbolicVm::<3>::with_context(ctx);
+        let mut v = Vesting::from(&vm);
+
+        let start: u64 = kani::any();
+        let duration: u64 = kani::any();
+        kani::assume(duration > 0);
+        kani::assume(start.checked_add(duration).is_some());   // defect 1 guard
+        //let total = U256::from(100u64);
+        let total = any_u256();
+        assume_no_mul_overflow(total, duration);
+
+        v.start.set(U64::from(start));
+        v.duration.set(U64::from(duration));
+        v.total.set(total);
+        // `released` left at its default zero -- unwritten slots read as zero.
+
+        v.release();
+
+        assert_eq!(v.released(), v.vested_amount(now), "released did not land on the schedule");
+    }
+
+    /// Defect 3's partner, and what makes the loss *frequency-dependent* rather
+    /// than simply wrong: claimed once from a fresh schedule, the two release
+    /// paths agree exactly. `drifting_release_loses_value` shows them diverging
+    /// once a second claim happens; neither harness says it alone.
+    ///
+    /// `last_claim` is seeded to `start`, which is what `initialize` guarantees,
+    /// so both paths divide `total * (now - start)` by `duration` — identical
+    /// operands, and the memo applies.
+    #[kani::proof]
+    #[kani::stub(ruint::Uint::wrapping_mul, kani_stylus_core::arith_oracle::mul_stub)]
+    #[kani::stub(ruint::Uint::wrapping_div, kani_stylus_core::arith_oracle::div_stub)]
+    #[kani::stub(ruint::Uint::overflowing_mul, kani_stylus_core::arith_oracle::overflowing_mul_stub)]
+    fn release_and_drifting_agree_on_a_single_claim() {
+        let now: u64 = kani::any();
+        let mut ctx = Context::concrete();
+        ctx.block_timestamp = now;
+        let vm = SymbolicVm::<4>::with_context(ctx);
+        let mut v = Vesting::from(&vm);
+
+        let start: u64 = kani::any();
+        let duration: u64 = kani::any();
+        kani::assume(duration > 0);
+        kani::assume(start.checked_add(duration).is_some());   // defect 1 guard
+        //let total = U256::from(100u64);
+        let total = any_u256();
+        assume_no_mul_overflow(total, duration);
+
+        v.start.set(U64::from(start));
+        v.duration.set(U64::from(duration));
+        v.total.set(total);
+        v.last_claim.set(U64::from(start));   // what `initialize` guarantees
+
+        // `release_drifting` computes `now - last_claim`, so the clock must not
+        // run backwards past the schedule's start.
+        kani::assume(start <= now);
+        kani::assume(now <= start + duration);
+
+        let correct = v.release();
+        let drifting = v.release_drifting();
+
+        assert_eq!(correct, drifting, "the two paths disagreed on a single claim");
+    }
+
+    /// DELIBERATE DEFECT 5: `releasable` subtracts with a bare `-`, so it wraps
+    /// once `released` exceeds what has vested. Unreachable through the
+    /// contract's own methods — `release` only ever adds what `releasable` just
+    /// returned — but reachable from seeded pre-state, which is exactly how a
+    /// proof sets things up, and OpenZeppelin leans on the same invariant.
+    #[kani::proof]
+    #[kani::stub(ruint::Uint::wrapping_div, kani_stylus_core::wrapping_div_stub_memo)]
+    #[kani::should_panic]
+    fn releasable_wraps_when_released_exceeds_vested() {
+        let now: u64 = kani::any();
+        let mut ctx = Context::concrete();
+        ctx.block_timestamp = now;
+        let vm = SymbolicVm::<3>::with_context(ctx);
+        let mut v = Vesting::from(&vm);
+
+        let start: u64 = kani::any();
+        let duration: u64 = kani::any();
+        kani::assume(duration > 0);
+        kani::assume(start.checked_add(duration).is_some());   // defect 1 guard
+        let total = U256::from(10_000_000_000_000_000_000_000_000_000u128); // 10^28, ARB total supply
+
+        v.start.set(U64::from(start));
+        v.duration.set(U64::from(duration));
+        v.total.set(total);
+
+        // Seed a state the contract cannot reach on its own: more released than
+        // has vested, by at most the whole entitlement.
+        //
+        // The bound on the excess matches `releasable_wraps_catastrophically`
+        // below, and the two must stay in step: this harness is what certifies
+        // that their shared setup is satisfiable at all. A `should_panic`
+        // harness fails outright if its assumptions are contradictory, where a
+        // positive one would pass vacuously and say nothing.
+        let vested_now = v.vested_amount(now);
+        let released = any_u256();
+        kani::assume(released > vested_now);
+        kani::assume(released - vested_now <= total);
+        v.released.set(released);
+
+        // Wraps to something near 2^256, so it cannot be within the schedule.
+        assert!(v.releasable() <= total, "releasable exceeded the total -- the bare `-` wrapped");
+    }
+
+    /// The same defect, stated as what *does* happen rather than as a property
+    /// that fails.
+    ///
+    /// Companion to `releasable_wraps_when_released_exceeds_vested`, with the
+    /// identical setup. Each covers the other's blind spot: a `should_panic`
+    /// harness passes on *any* panic but fails if its assumptions are
+    /// contradictory, while this one names the exact outcome but would pass
+    /// vacuously if they were. Keep the two setups in step.
+    ///
+    /// Bounding the excess by `total` is what makes the defect universal rather
+    /// than existential. With `released` drawn freely the wrap lands anywhere in
+    /// `[0, 2^256)` — take `vested_now == 0` and `released == U256::MAX` and
+    /// `releasable()` comes back as `1`, which is within the schedule and proves
+    /// nothing. A realistic over-release of at most one entitlement always wraps
+    /// to at least `2^256 - total`, which is the case worth showing.
+    ///
+    /// Being a plain proof rather than a `should_panic` one, it can use the
+    /// oracle and so quantify over every `total`, which the other cannot.
+    #[kani::proof]
+    #[kani::stub(ruint::Uint::wrapping_mul, kani_stylus_core::arith_oracle::mul_stub)]
+    #[kani::stub(ruint::Uint::wrapping_div, kani_stylus_core::arith_oracle::div_stub)]
+    #[kani::stub(ruint::Uint::overflowing_mul, kani_stylus_core::arith_oracle::overflowing_mul_stub)]
+    fn releasable_wraps_catastrophically() {
+        let now: u64 = kani::any();
+        let mut ctx = Context::concrete();
+        ctx.block_timestamp = now;
+        let vm = SymbolicVm::<3>::with_context(ctx);
+        let mut v = Vesting::from(&vm);
+
+        let start: u64 = kani::any();
+        let duration: u64 = kani::any();
+        kani::assume(duration > 0);
+        kani::assume(start.checked_add(duration).is_some());   // defect 1 guard
+        let total = any_u256();
+        kani::assume(total.checked_mul(U256::from(duration)).is_some());   // defect 2 guard
+        // The claim below needs `2^256 - total > total`, so it holds only while
+        // `total` is under half the `U256` range. Not a tractability hedge: above
+        // that, an entitlement's worth of over-release wraps to something
+        // *smaller* than the entitlement and the defect stops being visible this
+        // way. A token whose supply exceeds 2^255 has stranger problems.
+        kani::assume(total <= U256::MAX >> 1);
+
+        v.start.set(U64::from(start));
+        v.duration.set(U64::from(duration));
+        v.total.set(total);
+
+        // Identical to the harness above, which pins `total` instead; the
+        // assumptions about `released` are what the two must keep in step.
+        let vested_now = v.vested_amount(now);
+        let released = any_u256();
+        kani::assume(released > vested_now);
+        kani::assume(released - vested_now <= total);
+        v.released.set(released);
+
+        // `vested_now - released` wraps to `2^256 - (released - vested_now)`,
+        // and the excess is at most `total`, so the result is at least
+        // `2^256 - total`. An entitlement's worth of over-release turns a debt
+        // into very nearly the entire `U256` range.
+        assert!(
+            v.releasable() > total,
+            "the bare `-` did not wrap -- defect 5 is gone"
+        );
+    }
+
+    /// The contract's top-level safety invariant: however often the beneficiary
+    /// claims, and whenever, `released` never exceeds `total`.
+    #[kani::proof]
+    #[kani::stub(ruint::Uint::wrapping_div, kani_stylus_core::arith_oracle::div_stub)]
+    #[kani::stub(ruint::Uint::wrapping_mul, kani_stylus_core::arith_oracle::mul_stub)]
+    #[kani::stub(ruint::Uint::overflowing_mul, kani_stylus_core::arith_oracle::overflowing_mul_stub)]
+    fn released_never_exceeds_total() {
+        let now: u64 = kani::any();
+        let mut ctx = Context::concrete();
+        ctx.block_timestamp = now;
+        let vm = SymbolicVm::<4>::with_context(ctx);
+        let mut v = Vesting::from(&vm);
+
+        let start: u64 = kani::any();
+        let duration: u64 = kani::any();
+        kani::assume(duration > 0);
+        kani::assume(start.checked_add(duration).is_some());   // defect 1 guard
+        let total = any_u256();
+        assume_no_mul_overflow(total, duration);           // defect 2 guard
+
+        v.start.set(U64::from(start));
+        v.duration.set(U64::from(duration));
+        v.total.set(total);
+
+        // Two claims, the clock only moving forward. One claim would reduce to
+        // `vested <= total` and miss the accumulation the invariant is about.
+        let later: u64 = kani::any();
+        kani::assume(now <= later);
+
+        core::hint::black_box(v.release());
+
+        let vm2 = vm.with_timestamp(later);
+        let mut v2 = Vesting::from(&vm2);
+        core::hint::black_box(v2.release());
+
+        assert!(v2.released() <= total, "released exceeded the total");
     }
 }

@@ -28,7 +28,12 @@
 //! | --- | --- | --- |
 //! | [`wrapping_div_stub`] | nothing | almost always — this is the default |
 //! | [`wrapping_div_stub_memo`] | repeated identical divisions share one witness | a harness divides twice with the *same* operands |
-//! | [`wrapping_div_stub_monotone`] | `a <= a' ==> q <= q'` for a shared divisor | a harness relates divisions with *different* dividends |
+//!
+//! Neither supplies a *relational* fact about different dividends. A property
+//! that needs one — monotonicity, `x * y / z <= x` — belongs on
+//! [`arith_oracle`](crate::arith_oracle) instead, which drops exactness to buy
+//! those facts cheaply. This module keeps division exact, so every
+//! counterexample it produces is real; that is what it is for.
 //!
 //! ```ignore
 //! #[kani::proof]
@@ -218,7 +223,7 @@ static mut DIV_LOG: [(Uint<512, 8>, Uint<512, 8>, Uint<512, 8>, Uint<512, 8>); M
     [(Uint::ZERO, Uint::ZERO, Uint::ZERO, Uint::ZERO); MAX_DIVS];
 static mut DIV_COUNT: usize = 0;
 
-/// Record a division for later lookup. Shared by both wrappers below.
+/// Record a division for later lookup.
 fn log_division(wa: Uint<512, 8>, wb: Uint<512, 8>, wq: Uint<512, 8>, wr: Uint<512, 8>) {
     unsafe {
         let log = core::ptr::addr_of_mut!(DIV_LOG);
@@ -262,35 +267,6 @@ pub fn div_rem_memo<const BITS: usize, const LIMBS: usize>(
     (q, r)
 }
 
-/// The monotonicity lemma. No memo — harnesses that need this divide with
-/// *different* dividends, so a lookup would never hit and would only add
-/// verification conditions.
-pub fn div_rem_monotone<const BITS: usize, const LIMBS: usize>(
-    a: Uint<BITS, LIMBS>,
-    b: Uint<BITS, LIMBS>,
-) -> (Uint<BITS, LIMBS>, Uint<BITS, LIMBS>) {
-    let (wa, wb) = (widen(a), widen(b));
-    let (q, r) = div_rem_spec(a, b);
-    let (wq, wr) = (widen(q), widen(r));
-    unsafe {
-        let log = core::ptr::addr_of_mut!(DIV_LOG);
-        let n = *core::ptr::addr_of_mut!(DIV_COUNT);
-        let mut i = 0;
-        while i < MAX_DIVS {
-            if i < n {
-                let (pa, pb, pq, _) = (*log)[i];
-                if ueq(&pb, &wb) {
-                    kani::assume(ult(&pa, &wa) || !ult(&pq, &wq)); // a  <= pa ==> q  <= pq
-                    kani::assume(ult(&wa, &pa) || !ult(&wq, &pq)); // pa <= a  ==> pq <= q
-                }
-            }
-            i += 1;
-        }
-    }
-    log_division(wa, wb, wq, wr);
-    (q, r)
-}
-
 /// Plain division. Cheapest: no log, no lemmas. The default.
 pub fn wrapping_div_stub<const BITS: usize, const LIMBS: usize>(
     a: Uint<BITS, LIMBS>,
@@ -307,11 +283,3 @@ pub fn wrapping_div_stub_memo<const BITS: usize, const LIMBS: usize>(
     div_rem_memo::<BITS, LIMBS>(a, b).0
 }
 
-/// Memoising plus the monotonicity lemma. Needed only where a harness relates
-/// divisions with *different* dividends.
-pub fn wrapping_div_stub_monotone<const BITS: usize, const LIMBS: usize>(
-    a: Uint<BITS, LIMBS>,
-    b: Uint<BITS, LIMBS>,
-) -> Uint<BITS, LIMBS> {
-    div_rem_monotone::<BITS, LIMBS>(a, b).0
-}
