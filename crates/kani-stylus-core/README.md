@@ -148,25 +148,37 @@ Written by hand, a harness needs at least
 Why this is safe, what each model assumes, and how Certora, hevm and Halmos do
 the same: [`kb/36-storage-model.md`](../../kb/36-storage-model.md).
 
-## Nonlinear arithmetic: `arith` and `arith_oracle`
+## Nonlinear arithmetic: `arith::exact` and `arith::oracle`
 
 A symbolic `U256` division does not verify as ruint implements it, and even
 modelled exactly, facts like "`x * y / z` grows with `y`" are beyond a SAT
-solver at 256 bits. Two stub families, for two jobs:
+solver at 256 bits. Two modes, for two jobs:
 
-- **`arith`** models division exactly. Counterexamples are real, so use it to
-  demonstrate bugs and in every `#[kani::should_panic]` harness.
-- **`arith_oracle`** replaces `*` and `/` with uninterpreted functions
+- **`arith::exact`** models division by its specification. Counterexamples are
+  real, so use it to demonstrate bugs and in every `#[kani::should_panic]`
+  harness.
+- **`arith::oracle`** replaces `*` and `/` with uninterpreted functions
   constrained by lemmas (monotonicity, `x * y / y == x`, …), each checked
   against real ruint by `cargo test`. Proofs become cheap; a failure may be
   spurious, so replay it on real arithmetic.
 
+Both modes stub the same ruint functions, so a stub is named after the function
+it replaces and the module says which mode it is — `exact::wrapping_div_stub`
+and `oracle::wrapping_div_stub` both replace `ruint::Uint::wrapping_div`.
+A lemma only some proofs need lives on a suffixed stub rather than in the core,
+so nobody pays for power they do not use:
+
 ```rust
 #[kani::proof]
-#[kani::stub(ruint::Uint::wrapping_mul, kani_stylus_core::arith_oracle::mul_stub)]
-#[kani::stub(ruint::Uint::wrapping_div, kani_stylus_core::arith_oracle::div_stub)]
+#[kani::stub(ruint::Uint::wrapping_mul, kani_stylus_core::arith::oracle::wrapping_mul_stub)]
+#[kani::stub(ruint::Uint::wrapping_div, kani_stylus_core::arith::oracle::wrapping_div_stub)]
+#[kani::stub(ruint::Uint::overflowing_mul, kani_stylus_core::arith::oracle::overflowing_mul_stub)]
 fn vested_is_monotone_in_time() { /* ... */ }
 ```
+
+Stub all three together unless the harness provably never multiplies: leaving
+one out never fails to compile, it just leaves a bit-precise 256-bit multiplier
+in the proof and gives a wrong answer or no answer.
 
 Why, what each assumes, and how Certora and hevm do the same:
 [`kb/35-arithmetic-oracle.md`](../../kb/35-arithmetic-oracle.md).
@@ -346,7 +358,7 @@ owner-gated methods over a symbolic caller, mappings (so it needs
 arbitrary state.
 
 **[`examples/vesting`](../../examples/vesting)** adds time and integer
-division, and uses [`arith_oracle`](src/arith_oracle.rs).
+division, and uses [`arith::oracle`](src/arith/oracle.rs).
 
 In each, `cargo test` and `cargo build` behave exactly as they did before —
 confirmed by inspecting the built wasm for `kani` and `stylus-test` symbols

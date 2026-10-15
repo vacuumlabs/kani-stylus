@@ -55,7 +55,7 @@
 //!    fails the proof loudly.
 //!
 //! None of these makes a counterexample spurious. Unlike
-//! [`arith_oracle`](crate::arith_oracle), which knows only some facts about
+//! [`arith::oracle`](crate::arith::oracle), which knows only some facts about
 //! `*` and `/`, this is an exact model of storage given assumption 1: the
 //! contract behaves the same under any injective, region-disjoint layout.
 //!

@@ -34,9 +34,9 @@
 //!
 //! ```ignore
 //! #[kani::proof]
-//! #[kani::stub(ruint::Uint::wrapping_mul, kani_stylus_core::arith_oracle::mul_stub)]
-//! #[kani::stub(ruint::Uint::wrapping_div, kani_stylus_core::arith_oracle::div_stub)]
-//! #[kani::stub(ruint::Uint::overflowing_mul, kani_stylus_core::arith_oracle::overflowing_mul_stub)]
+//! #[kani::stub(ruint::Uint::wrapping_mul, kani_stylus_core::arith::oracle::wrapping_mul_stub)]
+//! #[kani::stub(ruint::Uint::wrapping_div, kani_stylus_core::arith::oracle::wrapping_div_stub)]
+//! #[kani::stub(ruint::Uint::overflowing_mul, kani_stylus_core::arith::oracle::overflowing_mul_stub)]
 //! fn vested_is_monotone_in_time() { /* ... */ }
 //! ```
 //!
@@ -68,7 +68,7 @@
 //!
 //! # Picking a stub: core, and decorations
 //!
-//! The core stubs — [`mul_stub`], [`overflowing_mul_stub`], [`div_stub`] —
+//! The core stubs — [`wrapping_mul_stub`], [`overflowing_mul_stub`], [`wrapping_div_stub`] —
 //! carry the lemmas essentially every proof needs. A lemma that only some
 //! proofs need lives on a separate, suffixed stub instead, so a proof that
 //! does not need it does not pay for it.
@@ -80,7 +80,7 @@
 //! `total * duration` while every later call computes `total * elapsed`.
 //!
 //! **The two mul stubs must come from the same family.** They share the record,
-//! so mixing [`mul_stub`] with [`overflowing_mul_stub_guarded`] applies the
+//! so mixing [`wrapping_mul_stub`] with [`overflowing_mul_stub_guarded`] applies the
 //! extra clause to some multiplications and not others. Every lemma here is
 //! true of real arithmetic, so a mismatch is never unsound — it just leaves a
 //! proof with an arbitrary subset of the facts it was expecting, and that is
@@ -154,18 +154,18 @@ fn with_oracle<R>(f: impl FnOnce(&mut Oracle) -> R) -> R {
 /// The signature mirrors the original, generic parameter names included — Kani
 /// requires it.
 #[cfg(kani)]
-pub fn mul_stub<const BITS: usize, const LIMBS: usize>(
+pub fn wrapping_mul_stub<const BITS: usize, const LIMBS: usize>(
     a: Uint<BITS, LIMBS>,
     b: Uint<BITS, LIMBS>,
 ) -> Uint<BITS, LIMBS> {
     from_u256(record_mul::<false>(to_u256(a), to_u256(b)).r)
 }
 
-/// [`mul_stub`] plus [`mul_pair_guard_facts`]. Pair it with
+/// [`wrapping_mul_stub`] plus [`mul_pair_guard_facts`]. Pair it with
 /// [`overflowing_mul_stub_guarded`] — the two must carry the same lemma set,
 /// or a proof gets an arbitrary subset of the facts it expects.
 #[cfg(kani)]
-pub fn mul_stub_guarded<const BITS: usize, const LIMBS: usize>(
+pub fn wrapping_mul_stub_guarded<const BITS: usize, const LIMBS: usize>(
     a: Uint<BITS, LIMBS>,
     b: Uint<BITS, LIMBS>,
 ) -> Uint<BITS, LIMBS> {
@@ -173,7 +173,7 @@ pub fn mul_stub_guarded<const BITS: usize, const LIMBS: usize>(
 }
 
 /// Drop-in replacement for `ruint::Uint::overflowing_mul`, which `checked_mul`
-/// calls. The product is the same opaque value `mul_stub` would give; the flag
+/// calls. The product is the same opaque value `wrapping_mul_stub` would give; the flag
 /// is the one the lemmas are keyed on.
 #[cfg(kani)]
 pub fn overflowing_mul_stub<const BITS: usize, const LIMBS: usize>(
@@ -185,7 +185,7 @@ pub fn overflowing_mul_stub<const BITS: usize, const LIMBS: usize>(
 }
 
 /// [`overflowing_mul_stub`] plus [`mul_pair_guard_facts`], to pair with
-/// [`mul_stub_guarded`].
+/// [`wrapping_mul_stub_guarded`].
 #[cfg(kani)]
 pub fn overflowing_mul_stub_guarded<const BITS: usize, const LIMBS: usize>(
     a: Uint<BITS, LIMBS>,
@@ -232,7 +232,7 @@ fn record_mul<const GUARDED: bool>(a: U256, b: U256) -> Op {
 ///
 /// Division by zero panics, as it does in ruint.
 #[cfg(kani)]
-pub fn div_stub<const BITS: usize, const LIMBS: usize>(
+pub fn wrapping_div_stub<const BITS: usize, const LIMBS: usize>(
     a: Uint<BITS, LIMBS>,
     b: Uint<BITS, LIMBS>,
 ) -> Uint<BITS, LIMBS> {
@@ -263,7 +263,7 @@ fn to_u256<const BITS: usize, const LIMBS: usize>(x: Uint<BITS, LIMBS>) -> U256 
     const {
         assert!(
             BITS == 256 && LIMBS == 4,
-            "kani_stylus_core::arith_oracle models U256 only, but this proof reaches `*` or `/` on another width"
+            "kani_stylus_core::arith::oracle models U256 only, but this proof reaches `*` or `/` on another width"
         )
     };
     U256::from_limbs(core::array::from_fn(|i| x.as_limbs()[i]))

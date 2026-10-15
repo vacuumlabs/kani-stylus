@@ -24,7 +24,7 @@
 //!
 //! [`wrapping_div_stub`] supplies no *relational* fact about different
 //! dividends. A property that needs one — monotonicity, `x * y / z <= x` —
-//! belongs on [`arith_oracle`](crate::arith_oracle) instead, which drops
+//! belongs on [`oracle`](crate::arith::oracle) instead, which drops
 //! exactness to buy those facts cheaply. This module keeps division exact, so
 //! every counterexample it produces is real; that is what it is for.
 //!
@@ -118,37 +118,6 @@ fn widen<const BITS: usize, const LIMBS: usize>(x: Uint<BITS, LIMBS>) -> Uint<51
     Uint::from_limbs(l)
 }
 
-/// Narrow a 512-bit value to `(low BITS bits, whether anything was lost)`.
-fn split<const BITS: usize, const LIMBS: usize>(
-    w: Uint<512, 8>,
-) -> (Uint<BITS, LIMBS>, bool) {
-    let wl = w.as_limbs();
-    let mut overflow = false;
-
-    let mut i = LIMBS;
-    while i < 8 {
-        if wl[i] != 0 {
-            overflow = true;
-        }
-        i += 1;
-    }
-
-    let mut l = [0u64; LIMBS];
-    let mut j = 0;
-    while j < LIMBS {
-        l[j] = wl[j];
-        j += 1;
-    }
-
-    let mask = Uint::<BITS, LIMBS>::MASK;
-    if l[LIMBS - 1] > mask {
-        overflow = true;
-        l[LIMBS - 1] &= mask;
-    }
-
-    (Uint::from_limbs(l), overflow)
-}
-
 /// A symbolic `Uint` guaranteed to be a *valid* value of its width.
 ///
 /// `from_limbs` asserts that the top limb fits in `BITS`, and there is no
@@ -201,5 +170,22 @@ pub fn wrapping_rem_stub<const BITS: usize, const LIMBS: usize>(
     b: Uint<BITS, LIMBS>,
 ) -> Uint<BITS, LIMBS> {
     div_rem_spec(a, b).1
+}
+
+#[cfg(kani)]
+mod proofs {
+    use super::{ueq, ult};
+    use crate::any_u256;
+
+    /// Discharges the limb-order assumption `ult` rests on. A Kani harness
+    /// rather than a `cargo test`, because this has to hold for *every* pair,
+    /// not a sample of them.
+    #[kani::proof]
+    fn comparison_helpers_agree_with_ruint() {
+        let x = any_u256();
+        let y = any_u256();
+        assert_eq!(ueq(&x, &y), x == y);
+        assert_eq!(ult(&x, &y), x < y);
+    }
 }
 

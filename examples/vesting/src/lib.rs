@@ -23,8 +23,9 @@
 //! `stylus_sdk::crypto::keccak` — but every harness that reaches the vesting
 //! formula replaces `ruint::Uint::wrapping_div`, because a single symbolic
 //! `U256` division is otherwise enough to make a proof diverge. Two families of
-//! stub do it: [`kani_stylus_core::arith`] models division exactly, and is used
-//! wherever a counterexample must be real; [`kani_stylus_core::arith_oracle`]
+//! stub do it: [`kani_stylus_core::arith::exact`] models division by its
+//! specification, and is used wherever a counterexample must be real;
+//! [`kani_stylus_core::arith::oracle`]
 //! replaces `*` and `/` with lemma-constrained unknowns, and is what makes the
 //! monotonicity and bound proofs converge.
 //!
@@ -396,23 +397,18 @@ mod proofs {
     use super::*;
     // The division stubs are named by full path in the `#[kani::stub(..)]`
     // attributes, so they need no import here.
-    use kani_stylus_core::{any_u256, ueq, ult, SymbolicVM};
+    use kani_stylus_core::{any_u256, SymbolicVM};
 
     use kani_stylus_core::Context;
 
     use ruint::Uint;
 
+    // Reached only through a `#[kani::stub(..)]` attribute below, which rustc
+    // does not count as a use.
+    #[allow(dead_code)]
     fn div_stub_always_zero<const BITS: usize, const LIMBS: usize>(
         _a: Uint<BITS, LIMBS>, _b: Uint<BITS, LIMBS>,
     ) -> Uint<BITS, LIMBS> { Uint::ZERO }
-
-    #[kani::proof]
-    fn comparison_helpers_agree_with_ruint() {
-        let x = any_u256();
-        let y = any_u256();
-        assert_eq!(ueq(&x, &y), x == y);
-        assert_eq!(ult(&x, &y), x < y);
-    }
 
     #[kani::proof]
     #[kani::stub(ruint::Uint::wrapping_div, crate::proofs::div_stub_always_zero)]
@@ -431,7 +427,7 @@ mod proofs {
 
 
     #[kani::proof]
-    #[kani::stub(ruint::Uint::overflowing_mul, kani_stylus_core::arith_oracle::overflowing_mul_stub)]
+    #[kani::stub(ruint::Uint::overflowing_mul, kani_stylus_core::arith::oracle::overflowing_mul_stub)]
     fn initialize_runs_successfully() {
         let vm = SymbolicVM::concrete_ctx();
         let mut v = Vesting::from(&vm);
@@ -455,7 +451,7 @@ mod proofs {
     /// hold on every path, so paths with valid parameters still exercise the
     /// re-initialization guard specifically.
     #[kani::proof]
-    #[kani::stub(ruint::Uint::overflowing_mul, kani_stylus_core::arith_oracle::overflowing_mul_stub)]
+    #[kani::stub(ruint::Uint::overflowing_mul, kani_stylus_core::arith::oracle::overflowing_mul_stub)]
     fn cannot_reinitialize() {
         let vm = SymbolicVM::concrete_ctx();
         let mut v = Vesting::from(&vm);
@@ -482,7 +478,7 @@ mod proofs {
     }
     
     #[kani::proof]
-    #[kani::stub(ruint::Uint::overflowing_mul, kani_stylus_core::arith_oracle::overflowing_mul_stub)]
+    #[kani::stub(ruint::Uint::overflowing_mul, kani_stylus_core::arith::oracle::overflowing_mul_stub)]
     fn initialize_rejects_zero_duration() {
         let vm = SymbolicVM::concrete_ctx();
         let mut v = Vesting::from(&vm);
@@ -512,7 +508,7 @@ mod proofs {
     // Never reached — the overflow panics before the division — but the stub
     // costs nothing and keeps ruint's unbounded `wrapping_div` loops out of the
     // goto program regardless of path feasibility.
-    #[kani::stub(ruint::Uint::wrapping_div, kani_stylus_core::wrapping_div_stub)]
+    #[kani::stub(ruint::Uint::wrapping_div, kani_stylus_core::arith::exact::wrapping_div_stub)]
     #[kani::should_panic]
     fn far_future_schedule_overflows() {
         let vm = SymbolicVM::concrete_ctx();
@@ -542,7 +538,7 @@ mod proofs {
     /// harness either supplies parameters that pass them or assumes success —
     /// so a guard that stopped firing would leave the suite green.
     #[kani::proof]
-    #[kani::stub(ruint::Uint::overflowing_mul, kani_stylus_core::arith_oracle::overflowing_mul_stub)]
+    #[kani::stub(ruint::Uint::overflowing_mul, kani_stylus_core::arith::oracle::overflowing_mul_stub)]
     fn initialize_rejects_an_unworkable_schedule() {
         let vm = SymbolicVM::concrete_ctx();
         let mut v = Vesting::from(&vm);
@@ -586,7 +582,7 @@ mod proofs {
     /// still catches a "fix": the second call would start returning `Err` and
     /// this assertion would fail.
     #[kani::proof]
-    #[kani::stub(ruint::Uint::overflowing_mul, kani_stylus_core::arith_oracle::overflowing_mul_stub)]
+    #[kani::stub(ruint::Uint::overflowing_mul, kani_stylus_core::arith::oracle::overflowing_mul_stub)]
     fn zero_beneficiary_never_latches() {
         let vm = SymbolicVM::concrete_ctx();
         let mut v = Vesting::from(&vm);
@@ -626,9 +622,9 @@ mod proofs {
     /// `vested_is_zero_at_the_start`, which does reach the sum and therefore
     /// does need the guard.
     #[kani::proof]
-    #[kani::stub(ruint::Uint::wrapping_div, kani_stylus_core::wrapping_div_stub)]
+    #[kani::stub(ruint::Uint::wrapping_div, kani_stylus_core::arith::exact::wrapping_div_stub)]
     // `initialize` calls `checked_mul`; see `vested_is_zero_at_the_start`.
-    #[kani::stub(ruint::Uint::overflowing_mul, kani_stylus_core::arith_oracle::overflowing_mul_stub)]
+    #[kani::stub(ruint::Uint::overflowing_mul, kani_stylus_core::arith::oracle::overflowing_mul_stub)]
     fn nothing_vests_before_the_start() {
         let vm = SymbolicVM::concrete_ctx();
         let mut v = Vesting::from(&vm);
@@ -651,11 +647,11 @@ mod proofs {
 
 
     #[kani::proof]
-    #[kani::stub(ruint::Uint::wrapping_div, kani_stylus_core::wrapping_div_stub)]
+    #[kani::stub(ruint::Uint::wrapping_div, kani_stylus_core::arith::exact::wrapping_div_stub)]
     // `initialize` calls `checked_mul`, which routes to `overflowing_mul`.
     // Unstubbed that reaches ruint's `addmul` -> `trim_end_zeros`, whose loops
     // CBMC cannot bound, so the harness would hang rather than fail.
-    #[kani::stub(ruint::Uint::overflowing_mul, kani_stylus_core::arith_oracle::overflowing_mul_stub)]
+    #[kani::stub(ruint::Uint::overflowing_mul, kani_stylus_core::arith::oracle::overflowing_mul_stub)]
     fn vested_is_zero_at_the_start() {
         let vm = SymbolicVM::concrete_ctx();
         let mut v = Vesting::from(&vm);
@@ -676,9 +672,9 @@ mod proofs {
 
 
     #[kani::proof]
-    #[kani::stub(ruint::Uint::wrapping_div, kani_stylus_core::wrapping_div_stub)]
+    #[kani::stub(ruint::Uint::wrapping_div, kani_stylus_core::arith::exact::wrapping_div_stub)]
     // `initialize` calls `checked_mul`; see `vested_is_zero_at_the_start`.
-    #[kani::stub(ruint::Uint::overflowing_mul, kani_stylus_core::arith_oracle::overflowing_mul_stub)]
+    #[kani::stub(ruint::Uint::overflowing_mul, kani_stylus_core::arith::oracle::overflowing_mul_stub)]
     fn vested_is_total_after_end() {
         let vm = SymbolicVM::concrete_ctx();
         let mut v = Vesting::from(&vm);
@@ -708,7 +704,7 @@ mod proofs {
     ///
     /// Bit-precise this does not converge -- it rests on `*` and `/` being
     /// monotone, which a SAT solver would have to rediscover at 256 bits. With
-    /// `kani_stylus_core::arith_oracle` it follows from a few lemmas: both are
+    /// `arith::oracle` it follows from a few lemmas: both are
     /// monotone, and `total * e / d <= total` while `e <= d`.
     ///
     /// The `cover` is the non-vacuity check, and it is deliberately confined
@@ -718,9 +714,9 @@ mod proofs {
     /// grow strictly mid-schedule -- the lemmas are consistent, and they have
     /// not made the assertion trivially true.
     #[kani::proof]
-    #[kani::stub(ruint::Uint::wrapping_mul, kani_stylus_core::arith_oracle::mul_stub_guarded)]
-    #[kani::stub(ruint::Uint::wrapping_div, kani_stylus_core::arith_oracle::div_stub)]
-    #[kani::stub(ruint::Uint::overflowing_mul, kani_stylus_core::arith_oracle::overflowing_mul_stub_guarded)]
+    #[kani::stub(ruint::Uint::wrapping_mul, kani_stylus_core::arith::oracle::wrapping_mul_stub_guarded)]
+    #[kani::stub(ruint::Uint::wrapping_div, kani_stylus_core::arith::oracle::wrapping_div_stub)]
+    #[kani::stub(ruint::Uint::overflowing_mul, kani_stylus_core::arith::oracle::overflowing_mul_stub_guarded)]
     fn vested_is_monotone_in_time() {
         let vm = SymbolicVM::concrete_ctx();
         let mut v = Vesting::from(&vm);
@@ -748,11 +744,11 @@ mod proofs {
 
     /// It rests on `total * e / d <= total` for `e <= d`, a nonlinear fact:
     /// with exact division this sat behind `slow-proofs`. It is one of
-    /// `arith_oracle`'s lemmas.
+    /// `arith::oracle`'s lemmas.
     #[kani::proof]
-    #[kani::stub(ruint::Uint::wrapping_mul, kani_stylus_core::arith_oracle::mul_stub_guarded)]
-    #[kani::stub(ruint::Uint::wrapping_div, kani_stylus_core::arith_oracle::div_stub)]
-    #[kani::stub(ruint::Uint::overflowing_mul, kani_stylus_core::arith_oracle::overflowing_mul_stub_guarded)]
+    #[kani::stub(ruint::Uint::wrapping_mul, kani_stylus_core::arith::oracle::wrapping_mul_stub_guarded)]
+    #[kani::stub(ruint::Uint::wrapping_div, kani_stylus_core::arith::oracle::wrapping_div_stub)]
+    #[kani::stub(ruint::Uint::overflowing_mul, kani_stylus_core::arith::oracle::overflowing_mul_stub_guarded)]
     fn vested_never_exceeds_total() {
         let vm = SymbolicVM::concrete_ctx();
         let mut v = Vesting::from(&vm);
@@ -777,7 +773,7 @@ mod proofs {
     }
 
     #[kani::proof]
-    #[kani::stub(ruint::Uint::wrapping_div, kani_stylus_core::wrapping_div_stub)]
+    #[kani::stub(ruint::Uint::wrapping_div, kani_stylus_core::arith::exact::wrapping_div_stub)]
     #[kani::should_panic]
     fn vested_unchecked_overflows() {
         let vm = SymbolicVM::concrete_ctx();
@@ -809,9 +805,9 @@ mod proofs {
     }
 
     #[kani::proof]
-    #[kani::stub(ruint::Uint::wrapping_mul, kani_stylus_core::arith_oracle::mul_stub_guarded)]
-    #[kani::stub(ruint::Uint::wrapping_div, kani_stylus_core::arith_oracle::div_stub)]
-    #[kani::stub(ruint::Uint::overflowing_mul, kani_stylus_core::arith_oracle::overflowing_mul_stub_guarded)]
+    #[kani::stub(ruint::Uint::wrapping_mul, kani_stylus_core::arith::oracle::wrapping_mul_stub_guarded)]
+    #[kani::stub(ruint::Uint::wrapping_div, kani_stylus_core::arith::oracle::wrapping_div_stub)]
+    #[kani::stub(ruint::Uint::overflowing_mul, kani_stylus_core::arith::oracle::overflowing_mul_stub_guarded)]
     fn release_is_idempotent_at_the_same_timestamp() {
         let mut ctx = Context::concrete();
         ctx.block_timestamp = kani::any();
@@ -838,7 +834,7 @@ mod proofs {
     }
 
     #[kani::proof]
-    #[kani::stub(ruint::Uint::wrapping_div, kani_stylus_core::wrapping_div_stub)]
+    #[kani::stub(ruint::Uint::wrapping_div, kani_stylus_core::arith::exact::wrapping_div_stub)]
     // Division stays exact: the loss this demonstrates *is* floor-division
     // behaviour, so a fabricated quotient would prove nothing. Only the overflow
     // flag goes through the oracle, and `assume(created.is_ok())` pins it.
@@ -848,7 +844,7 @@ mod proofs {
     // start)`. Without the guard lemma the oracle may call that second product
     // overflowed, and `vested_amount`'s `expect` panics -- which a
     // `should_panic` harness accepts in silence.
-    #[kani::stub(ruint::Uint::overflowing_mul, kani_stylus_core::arith_oracle::overflowing_mul_stub_guarded)]
+    #[kani::stub(ruint::Uint::overflowing_mul, kani_stylus_core::arith::oracle::overflowing_mul_stub_guarded)]
     #[kani::should_panic]
     fn drifting_release_loses_value() {
         let start: u64 = kani::any();
@@ -891,9 +887,9 @@ mod proofs {
     /// assertion — so this needs only that identical operands give identical
     /// quotients, never a fact relating different products.
     #[kani::proof]
-    #[kani::stub(ruint::Uint::wrapping_mul, kani_stylus_core::arith_oracle::mul_stub_guarded)]
-    #[kani::stub(ruint::Uint::wrapping_div, kani_stylus_core::arith_oracle::div_stub)]
-    #[kani::stub(ruint::Uint::overflowing_mul, kani_stylus_core::arith_oracle::overflowing_mul_stub_guarded)]
+    #[kani::stub(ruint::Uint::wrapping_mul, kani_stylus_core::arith::oracle::wrapping_mul_stub_guarded)]
+    #[kani::stub(ruint::Uint::wrapping_div, kani_stylus_core::arith::oracle::wrapping_div_stub)]
+    #[kani::stub(ruint::Uint::overflowing_mul, kani_stylus_core::arith::oracle::overflowing_mul_stub_guarded)]
     fn release_leaves_released_equal_to_vested() {
         let now: u64 = kani::any();
         let mut ctx = Context::concrete();
@@ -925,9 +921,9 @@ mod proofs {
     /// `total * (now - start)` by `duration` — identical operands, which is all
     /// the oracle needs to make the two quotients equal.
     #[kani::proof]
-    #[kani::stub(ruint::Uint::wrapping_mul, kani_stylus_core::arith_oracle::mul_stub_guarded)]
-    #[kani::stub(ruint::Uint::wrapping_div, kani_stylus_core::arith_oracle::div_stub)]
-    #[kani::stub(ruint::Uint::overflowing_mul, kani_stylus_core::arith_oracle::overflowing_mul_stub_guarded)]
+    #[kani::stub(ruint::Uint::wrapping_mul, kani_stylus_core::arith::oracle::wrapping_mul_stub_guarded)]
+    #[kani::stub(ruint::Uint::wrapping_div, kani_stylus_core::arith::oracle::wrapping_div_stub)]
+    #[kani::stub(ruint::Uint::overflowing_mul, kani_stylus_core::arith::oracle::overflowing_mul_stub_guarded)]
     fn release_and_drifting_agree_on_a_single_claim() {
         let now: u64 = kani::any();
         let mut ctx = Context::concrete();
@@ -969,9 +965,9 @@ mod proofs {
     /// over-release of at most one entitlement always wraps to at least
     /// `2^256 - total`, which is the case worth showing.
     #[kani::proof]
-    #[kani::stub(ruint::Uint::wrapping_mul, kani_stylus_core::arith_oracle::mul_stub_guarded)]
-    #[kani::stub(ruint::Uint::wrapping_div, kani_stylus_core::arith_oracle::div_stub)]
-    #[kani::stub(ruint::Uint::overflowing_mul, kani_stylus_core::arith_oracle::overflowing_mul_stub_guarded)]
+    #[kani::stub(ruint::Uint::wrapping_mul, kani_stylus_core::arith::oracle::wrapping_mul_stub_guarded)]
+    #[kani::stub(ruint::Uint::wrapping_div, kani_stylus_core::arith::oracle::wrapping_div_stub)]
+    #[kani::stub(ruint::Uint::overflowing_mul, kani_stylus_core::arith::oracle::overflowing_mul_stub_guarded)]
     fn releasable_wraps_catastrophically() {
         let now: u64 = kani::any();
         let mut ctx = Context::concrete();
@@ -1018,9 +1014,9 @@ mod proofs {
     /// The contract's top-level safety invariant: however often the beneficiary
     /// claims, and whenever, `released` never exceeds `total`.
     #[kani::proof]
-    #[kani::stub(ruint::Uint::wrapping_div, kani_stylus_core::arith_oracle::div_stub)]
-    #[kani::stub(ruint::Uint::wrapping_mul, kani_stylus_core::arith_oracle::mul_stub_guarded)]
-    #[kani::stub(ruint::Uint::overflowing_mul, kani_stylus_core::arith_oracle::overflowing_mul_stub_guarded)]
+    #[kani::stub(ruint::Uint::wrapping_div, kani_stylus_core::arith::oracle::wrapping_div_stub)]
+    #[kani::stub(ruint::Uint::wrapping_mul, kani_stylus_core::arith::oracle::wrapping_mul_stub_guarded)]
+    #[kani::stub(ruint::Uint::overflowing_mul, kani_stylus_core::arith::oracle::overflowing_mul_stub_guarded)]
     fn released_never_exceeds_total() {
         let now: u64 = kani::any();
         let mut ctx = Context::concrete();
@@ -1066,9 +1062,9 @@ mod proofs {
     /// lemma load as `vested_is_monotone_in_time` rather than the cheaper
     /// same-operands determinism.
     #[kani::proof]
-    #[kani::stub(ruint::Uint::wrapping_mul, kani_stylus_core::arith_oracle::mul_stub_guarded)]
-    #[kani::stub(ruint::Uint::wrapping_div, kani_stylus_core::arith_oracle::div_stub)]
-    #[kani::stub(ruint::Uint::overflowing_mul, kani_stylus_core::arith_oracle::overflowing_mul_stub_guarded)]
+    #[kani::stub(ruint::Uint::wrapping_mul, kani_stylus_core::arith::oracle::wrapping_mul_stub_guarded)]
+    #[kani::stub(ruint::Uint::wrapping_div, kani_stylus_core::arith::oracle::wrapping_div_stub)]
+    #[kani::stub(ruint::Uint::overflowing_mul, kani_stylus_core::arith::oracle::overflowing_mul_stub_guarded)]
     fn released_never_exceeds_vested() {
         let now: u64 = kani::any();
         let mut ctx = Context::concrete();
