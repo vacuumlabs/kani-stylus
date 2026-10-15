@@ -978,9 +978,12 @@ mod proofs {
         let start: u64 = kani::any();
         let duration: u64 = kani::any();
         kani::assume(duration > 0);
-        kani::assume(start.checked_add(duration).is_some());   // defect 1 guard
         let total = any_u256();
-        kani::assume(total.checked_mul(U256::from(duration)).is_some());   // defect 2 guard
+
+        // See `vested_never_exceeds_total`: `initialize` carries both guards.
+        let created = v.initialize(Address::from([1u8; 20]), total, start, duration);
+        kani::assume(created.is_ok());
+
         // The claim below needs `2^256 - total > total`, so it holds only while
         // `total` is under half the `U256` range. Not a tractability hedge: above
         // that, an entitlement's worth of over-release wraps to something
@@ -988,12 +991,9 @@ mod proofs {
         // way. A token whose supply exceeds 2^255 has stranger problems.
         kani::assume(total <= U256::MAX >> 1);
 
-        v.start.set(U64::from(start));
-        v.duration.set(U64::from(duration));
-        v.total.set(total);
-
-        // Seed a state the contract cannot reach on its own: more released than
-        // has vested, by at most the whole entitlement.
+        // Seed the one thing `initialize` cannot produce, and the contract
+        // cannot reach on its own: more released than has vested, by at most
+        // the whole entitlement.
         let vested_now = v.vested_amount(now);
         let released = any_u256();
         kani::assume(released > vested_now);
@@ -1045,5 +1045,59 @@ mod proofs {
         core::hint::black_box(v2.release());
 
         assert!(v2.released() <= total, "released exceeded the total");
+    }
+
+    /// The invariant that keeps DELIBERATE DEFECT 5 out of reach in normal
+    /// operation: `released` never runs past what the schedule says has vested,
+    /// so `releasable`'s bare `-` has nothing to wrap on.
+    ///
+    /// Proven as the *inductive step*, not for one call sequence. The pre-state
+    /// is any `released` the invariant admits, so a single claim from it covers
+    /// every sequence of claims; the base case is a fresh contract, whose
+    /// `released` is zero. `release_leaves_released_equal_to_vested` is the
+    /// matching fact that a claim lands exactly on the schedule.
+    ///
+    /// The step needs monotonicity — `vested(now) <= vested(later)` is what
+    /// makes the subtraction inside `release` safe — so this carries the same
+    /// lemma load as `vested_is_monotone_in_time` rather than the cheaper
+    /// same-operands determinism.
+    #[kani::proof]
+    #[kani::stub(ruint::Uint::wrapping_mul, kani_stylus_core::arith_oracle::mul_stub)]
+    #[kani::stub(ruint::Uint::wrapping_div, kani_stylus_core::arith_oracle::div_stub)]
+    #[kani::stub(ruint::Uint::overflowing_mul, kani_stylus_core::arith_oracle::overflowing_mul_stub)]
+    fn released_never_exceeds_vested() {
+        let now: u64 = kani::any();
+        let mut ctx = Context::concrete();
+        ctx.block_timestamp = now;
+        let vm = SymbolicVm::<4>::with_context(ctx);
+        let mut v = Vesting::from(&vm);
+
+        let start: u64 = kani::any();
+        let duration: u64 = kani::any();
+        kani::assume(duration > 0);
+        let total = any_u256();
+
+        // See `vested_never_exceeds_total`: `initialize` carries both guards.
+        let created = v.initialize(Address::from([1u8; 20]), total, start, duration);
+        kani::assume(created.is_ok());
+
+        // Any pre-state the invariant admits, rather than one the contract was
+        // walked into. That is what makes a single claim stand for all of them.
+        let released = any_u256();
+        kani::assume(released <= v.vested_amount(now));
+        v.released.set(released);
+
+        // One claim, the clock only moving forward.
+        let later: u64 = kani::any();
+        kani::assume(now <= later);
+
+        let vm2 = vm.with_timestamp(later);
+        let mut v2 = Vesting::from(&vm2);
+        core::hint::black_box(v2.release());
+
+        assert!(
+            v2.released() <= v2.vested_amount(later),
+            "a claim pushed released past what has vested"
+        );
     }
 }
