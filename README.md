@@ -103,10 +103,9 @@ state. Mapping slots are modelled structurally by default; `./verify.sh
 [`kb/36-storage-model.md`](kb/36-storage-model.md).
 
 [`examples/vesting`](examples/vesting/) adds time and integer division, and
-proves the vested amount never goes backwards for any total up to 2¹⁹², with
-the arithmetic oracle — see [`kb/35-arithmetic-oracle.md`](kb/35-arithmetic-oracle.md).
-Its slowest harnesses sit behind a `slow-proofs` feature that `verify.sh`
-leaves off.
+proves the vested amount never goes backwards for every total the contract
+accepts, with the arithmetic oracle — see
+[`kb/35-arithmetic-oracle.md`](kb/35-arithmetic-oracle.md).
 
 ### 4. Learn the two halves
 

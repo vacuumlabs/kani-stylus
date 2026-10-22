@@ -35,10 +35,10 @@ pub type SymbolicVM = SymbolicVm<16>;
 /// from 577k to 221k variables. See `kb/36-storage-model.md`.
 ///
 /// So there is one chain state per proof. Building a second VM with
-/// [`new`](Self::new) or its siblings fails the proof; handles made by
-/// cloning, or by [`with_timestamp`](Self::with_timestamp), share it.
-/// Changing the context changes it for every handle — which is the next
-/// transaction, as it is on chain.
+/// [`new`](Self::new) or its siblings fails the proof; handles made by cloning
+/// share it. Changing the context — [`set_timestamp`](Self::set_timestamp),
+/// say — changes it for every handle, **including contracts built earlier**,
+/// which is the next transaction as it is on chain.
 ///
 /// # Example
 ///
@@ -84,7 +84,7 @@ impl<const SLOTS: usize> SymbolicVm<SLOTS> {
         unsafe {
             assert!(
                 !*core::ptr::addr_of!(BUILT),
-                "kani-stylus: one SymbolicVm per proof -- clone it, or use with_timestamp/with_sender"
+                "kani-stylus: one SymbolicVm per proof -- clone it, or use set_timestamp"
             );
             *core::ptr::addr_of_mut!(BUILT) = true;
         }
@@ -130,22 +130,20 @@ impl<const SLOTS: usize> SymbolicVm<SLOTS> {
         self
     }
 
-    /// Advance the clock: a handle on the same storage, at `block_timestamp`.
+    /// Advance the clock to `block_timestamp`: the next transaction.
     ///
-    /// Context is shared by every handle, so this is the clock for all of
-    /// them from here on — the next transaction. It borrows rather than
-    /// consuming so the old handle stays usable.
+    /// There is one context per proof, so this moves the clock for everything
+    /// — including contracts already built. Keep using the same handle; a
+    /// second one would be the same value, not a second world.
     ///
     /// ```ignore
-    /// let mut v1 = Contract::from(&vm);
-    /// v1.claim();                       // at vm's timestamp
-    /// let vm2 = vm.with_timestamp(t2);
-    /// let mut v2 = Contract::from(&vm2);
-    /// v2.claim();                       // sees v1's writes, at t2
+    /// let mut v = Contract::from(&vm);
+    /// v.claim();                  // at vm's timestamp
+    /// vm.set_timestamp(t2);
+    /// v.claim();                  // sees the first claim's writes, at t2
     /// ```
-    pub fn with_timestamp(&self, block_timestamp: u64) -> Self {
+    pub fn set_timestamp(&self, block_timestamp: u64) {
         with_ctx(|c| c.block_timestamp = block_timestamp);
-        Self
     }
 
     pub fn context(&self) -> Context {

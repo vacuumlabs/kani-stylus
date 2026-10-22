@@ -19,9 +19,6 @@
 # `kani_stylus_core::proof!`), vesting because a symbolic `U256` division has
 # to be replaced by its specification or the proof diverges.
 #
-# vesting also gates its slowest and non-converging harnesses behind a
-# `slow-proofs` feature, which this script deliberately does not enable.
-#
 # Assertion-reachability checks are off. They change no verdict: an
 # unreachable assertion passes vacuously either way, and they only report
 # which ones did. They cost memory, though: with them on, the vault suite

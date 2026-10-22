@@ -64,9 +64,9 @@
 //! derivation (as an injective function — see [`slots`]), keccak256 (as an
 //! uninterpreted injective function — see [`keccak`]), `msg`/`block`/`chain`
 //! context.
-//! Optionally, `U256` division exactly by its specification ([`arith`]), or
+//! Optionally, `U256` division exactly by its specification ([`arith::exact`](arith::exact)), or
 //! `*` and `/` as uninterpreted functions constrained by lemmas
-//! ([`arith_oracle`]).
+//! ([`arith::oracle`](arith::oracle)).
 //!
 //! Not modelled, and a proof reaching one of these **fails loudly** rather than
 //! inventing an answer: cross-contract calls, `CREATE`/`CREATE2`, gas
@@ -114,13 +114,10 @@
 #[cfg(kani)]
 extern crate alloc;
 
-#[cfg(kani)]
-pub mod arith;
-// The one exception: `arith_oracle`'s lemmas are plain predicates, and
-// `cargo test` checks them against real ruint arithmetic. Only its stubs need
-// Kani.
+// The one exception to the `cfg(kani)` rule below: `arith::oracle`'s lemmas are
+// plain predicates, and `cargo test` checks them against real ruint arithmetic.
 #[cfg(any(kani, test))]
-pub mod arith_oracle;
+pub mod arith;
 #[cfg(kani)]
 pub mod context;
 #[cfg(kani)]
@@ -132,11 +129,6 @@ pub mod slots;
 #[cfg(kani)]
 pub mod storage;
 
-#[cfg(kani)]
-pub use arith::{
-    any_uint, div_rem_memo, div_rem_monotone, div_rem_spec, split, ueq, ult, widen,
-    wrapping_div_stub, wrapping_div_stub_memo, wrapping_div_stub_monotone, MAX_DIVS,
-};
 #[cfg(kani)]
 pub use context::{any_address, any_u256, Context};
 #[cfg(kani)]
@@ -169,7 +161,7 @@ pub use keccak::{keccak_stub, HashOracle};
 /// last, and past about fourteen Kani attributes on one function rustc's
 /// default `recursion_limit` of 128 is exhausted. Nine leaves room for a
 /// harness's own — `#[kani::should_panic]` and the two
-/// [`arith_oracle`] stubs, say. A harness that needs them can list them itself.
+/// [`arith::oracle`](arith::oracle) stubs, say. A harness that needs them can list them itself.
 #[cfg(not(feature = "precise-storage"))]
 #[macro_export]
 macro_rules! proof {
